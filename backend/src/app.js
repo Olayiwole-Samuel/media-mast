@@ -21,12 +21,26 @@ if (process.env.VERCEL) {
 app.use(helmet());
 
 // ── CORS ──
+// Fixed origins, plus APP_URL and a comma-separated CORS_ORIGINS list, so a
+// new frontend address only needs an environment variable.
+const trimSlash = (u) => String(u || '').trim().replace(/\/+$/, '');
 const allowedOrigins = [
     'http://localhost:3000',
     'https://media-masters-x.vercel.app',
-];
+    'https://media-mast.vercel.app',
+    trimSlash(process.env.APP_URL),
+    ...String(process.env.CORS_ORIGINS || '').split(',').map(trimSlash),
+].filter(Boolean);
 
-app.use(cors({
+// Same-origin: when the frontend and this API share a domain (vercel.json
+// routes /api/v1 to the backend), the browser's Origin is this host.
+const isSameOrigin = (req, origin) => {
+    const host = req.get('x-forwarded-host') || req.get('host');
+    if (!host) return false;
+    try { return new URL(origin).host === host; } catch { return false; }
+};
+
+app.use((req, res, next) => cors({
     origin: function (origin, callback) {
         // Allow requests that don't include an Origin header
         // (for example, server-to-server requests)
@@ -34,7 +48,7 @@ app.use(cors({
             return callback(null, true);
         }
 
-        if (allowedOrigins.includes(origin)) {
+        if (allowedOrigins.includes(origin) || isSameOrigin(req, origin)) {
             return callback(null, true);
         }
 
@@ -46,7 +60,7 @@ app.use(cors({
         return callback(corsError);
     },
     credentials: true,
-}));
+})(req, res, next));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

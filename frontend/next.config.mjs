@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 /** @type {import('next').NextConfig} */
 const nextConfig = {
     images: {
+        // /_next/image is not routed to the frontend behind the root vercel.json
+        // services split (it 404s), so images are served as-is.
+        unoptimized: true,
         remotePatterns: [
             { protocol: 'https', hostname: 'lh3.googleusercontent.com' },
             { protocol: 'https', hostname: 'avatars.githubusercontent.com' },
