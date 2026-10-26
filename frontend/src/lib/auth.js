@@ -15,7 +15,7 @@ const AUTH_EVENT = "mm-auth-change";
 export const ACCOUNT_HOME = {
     ADMIN: "/admin/dashboard",
     COMPANY: "/company/dashboard",
-    EMPLOYEE: "/company/dashboard",
+    EMPLOYEE: "/company/workspace",
     INDIVIDUAL: "/dashboard",
     STATION: "/station",
 };

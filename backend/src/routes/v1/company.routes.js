@@ -16,6 +16,7 @@ const {
     requirePermission,
 } = require('../../middleware/role');
 const { objectIdParam } = require('../../utils/objectId');
+const { getWorkspace } = require('../../controllers/workspace.controller');
 
 const router = express.Router();
 
@@ -25,6 +26,9 @@ const router = express.Router();
 
 router.use(protect);
 router.use(requireCompany);
+
+// The signed-in member's own work (no extra permission: it is all theirs).
+router.get('/workspace', getWorkspace);
 
 // Every :id in this router is a Employee (team member) ObjectId: a malformed id is a
 // 400 before any query runs (N17). Valid-but-unknown ids keep their 404.

@@ -116,6 +116,9 @@ export const changePassword = async (currentPassword, newPassword) => {
 
 // ── COMPANY APIS ──
 
+// The signed-in team member's own work (any company member).
+export const getMyWorkspace = async () => authFetch('/api/v1/company/workspace');
+
 // Get company dashboard data
 export const getCompanyDashboard = async () => {
     return authFetch('/api/v1/company/dashboard');

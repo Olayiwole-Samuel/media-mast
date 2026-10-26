@@ -113,7 +113,12 @@ export default function CompanySidebar({
     };
 
     const owner = isCompanyOwner(user);
-    const navItems = NAV_ITEMS.filter((item) => (owner || !item.ownerOnly) && (runsStations || !item.stationOperatorOnly));
+    // Employees get their own dashboard (their work); the company dashboard
+    // (analytics) stays with the owner.
+    const navItems = NAV_ITEMS
+        .map((item) => (!owner && item.href === "/company/dashboard" ? { ...item, label: "My dashboard", href: "/company/workspace" } : item))
+        .filter((item) => (owner || !item.ownerOnly) && (runsStations || !item.stationOperatorOnly));
+    const homeHref = owner ? "/company/dashboard" : "/company/workspace";
     const quickActions = QUICK_ACTIONS.filter((item) => owner || !item.ownerOnly);
 
     const handleLogout = signOut;
@@ -150,7 +155,7 @@ export default function CompanySidebar({
                 {/* Header / Brand */}
                 <div className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200/80 px-4 dark:border-slate-800/80">
                     <Link
-                        href="/company/dashboard"
+                        href={homeHref}
                         className="flex items-center gap-3 overflow-hidden rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
                     >
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-md shadow-emerald-500/20">
