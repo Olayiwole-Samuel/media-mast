@@ -12,6 +12,7 @@ mongoose.set('bufferCommands', false);
 
 const src = (p) => require(path.join(BACKEND, 'src', p));
 const User = src('models/User'), Employee = src('models/Employee'), Company = src('models/Company'), AuditLog = src('models/AuditLog');
+const Verification = src('models/Verification'), Station = src('models/Station');
 const { registerLimiter } = src('middleware/rateLimit');
 
 let db;
@@ -19,7 +20,7 @@ let IO_DELAY = 0;
 const io = () => (IO_DELAY ? new Promise((r) => setTimeout(r, IO_DELAY)) : Promise.resolve());
 const eq = (a, b) => (a == null && b == null) || (a != null && b != null && String(a) === String(b));
 const matches = (d, f = {}) => Object.entries(f).every(([k, v]) => eq(d[k], v));
-const UNIQUE = { users: ['email'], companies: ['email', 'slug'], employees: ['userId'] };
+const UNIQUE = { users: ['email'], companies: ['email', 'slug'], employees: ['userId'], verifications: ['userId'], stations: ['slug'] };
 const fail = {}; // e.g. fail['employees.create'] = new Error('boom')
 const dup = (c, field, value) => { const e = new Error(`E11000 duplicate key error collection: mm.${c} index: ${field}_1 dup key: { ${field}: "${value}" }`); e.code = 11000; e.keyPattern = { [field]: 1 }; e.keyValue = { [field]: value }; return e; };
 const runSaveHooks = async (M, d) => { await d.validate(); const r = M.schema.s.hooks.execPre('save', d, [{}]); if (r && r.then) await r; };
@@ -38,7 +39,8 @@ const toDoc = (M, c, o) => {
     return d;
 };
 const q = (M, c, getter) => { const x = { select: () => x, populate: () => x, lean: () => x, then: (r, j) => io().then(getter).then((v) => toDoc(M, c, v)).then(r, j) }; return x; };
-for (const [M, c] of [[User, 'users'], [Employee, 'employees'], [Company, 'companies']]) {
+for (const [M, c] of [[User, 'users'], [Employee, 'employees'], [Company, 'companies'], [Verification, 'verifications'], [Station, 'stations']]) {
+    M.exists = async (f) => (db[c].find((d) => matches(d, f)) ? { _id: true } : null);
     M.findOne = (f) => q(M, c, () => db[c].find((d) => matches(d, f)) || null);
     M.findById = (id) => q(M, c, () => db[c].find((d) => eq(d._id, id)) || null);
     M.create = async (data) => {
@@ -53,7 +55,7 @@ AuditLog.create = async (data) => { if (fail['audit.create']) throw fail['audit.
 const logs = [];
 for (const k of ['log', 'warn', 'error', 'info']) console[k] = (...a) => logs.push(a.map((x) => (x instanceof Error ? `${x.message} ${x.stack}` : typeof x === 'string' ? x : (() => { try { return JSON.stringify(x); } catch { return String(x); } })())).join(' '));
 const out = (s) => process.stdout.write(s + '\n');
-const seed = () => { db = { users: [], employees: [], companies: [], audit: [] }; for (const k of Object.keys(fail)) delete fail[k]; };
+const seed = () => { db = { users: [], employees: [], companies: [], verifications: [], stations: [], audit: [] }; for (const k of Object.keys(fail)) delete fail[k]; };
 const counts = () => `${db.companies.length}/${db.users.length}/${db.employees.length}`;
 const PW = () => 'Aa1!' + crypto.randomBytes(9).toString('base64url');
 

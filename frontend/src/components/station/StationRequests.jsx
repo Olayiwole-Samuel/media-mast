@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import { bookingStatus, formatMoney, formatDate, spotHasAired } from "@/lib/status";
 import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/PageState";
+import BookingAdvert from "@/components/station/BookingAdvert";
 
 // Booking requests for the stations the signed-in account operates
 // (GET /bookings/station): a STATION account, or a company linked to a station.
@@ -53,10 +54,10 @@ function BookingCard({ booking, busy, onAction }) {
             <div className="flex flex-col justify-between gap-3 sm:flex-row">
                 <div className="min-w-0">
                     <p className="font-semibold text-slate-900 dark:text-white">
-                        {booking.stationId?.name || "Station"} · {formatDate(booking.date)} at {booking.time}
+                        {booking.stationId?.name || "Station"} · {formatDate(booking.date)}{booking.slot === "PROGRAMME" || booking.slot === "EDITION" || booking.slot === "DISPLAY" ? "" : ` from ${booking.time}`}
                     </p>
                     <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-                        {booking.duration} min · {booking.slot} · {advertiser}
+                        {booking.rateName ? `${booking.rateName}${booking.spotSeconds ? ` · ${booking.spotSeconds}s spot` : ""}` : `${booking.duration} min · ${booking.slot}`} · {advertiser}
                         {booking.campaignId?.name ? ` · ${booking.campaignId.name}` : ""}
                     </p>
                     <p className="mt-0.5 font-mono text-xs text-slate-400">Ref {booking.bookingReference}</p>
@@ -71,6 +72,8 @@ function BookingCard({ booking, busy, onAction }) {
                     </span>
                 </div>
             </div>
+
+            <BookingAdvert booking={booking} />
 
             {booking.stationNote && (
                 <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">

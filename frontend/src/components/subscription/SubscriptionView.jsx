@@ -3,38 +3,51 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Gem, Check, Loader2, CalendarClock, HardDrive, Megaphone, Percent, Users } from "lucide-react";
-import { getPlans, getMySubscription, subscribeToPlan, cancelMySubscription } from "@/lib/api";
+import { Gem, Check, Loader2, CalendarClock, Send } from "lucide-react";
+import { getPlans, getMySubscription, requestEnterprise } from "@/lib/api";
 import { useSession, isCompanyOwner } from "@/lib/auth";
 import { advertiserPaths } from "@/lib/cart";
 import { formatDate, formatMoney } from "@/lib/status";
 import { PageLoading, ApiErrorState } from "@/components/common/PageState";
 
-// The advertiser's plan: current subscription, usage against its limits, and
-// the plans to choose from (monthly or annual). Booking needs a plan.
+// Plan: booking is open to every approved account (pay per spot, priced from
+// each station's rate card). Enterprise is the one plan offered here: a
+// custom deal (volume discount, more storage, dedicated support) set up by
+// the Media Masters team. The owner asks for it with this form; an admin then
+// assigns it. The public pricing page is unchanged.
 
 const formatStorage = (mb) => (mb >= 1024 ? `${Math.round((mb / 1024) * 10) / 10} GB` : `${mb} MB`);
-const formatBytes = (b) => (b >= 1024 * 1024 * 1024 ? `${(b / 1024 ** 3).toFixed(1)} GB` : b >= 1024 * 1024 ? `${(b / 1024 ** 2).toFixed(1)} MB` : `${Math.ceil(b / 1024)} KB`);
 
-const planFeatures = (p) => [
-    p.maxActiveCampaigns ? `${p.maxActiveCampaigns} active campaign${p.maxActiveCampaigns === 1 ? "" : "s"}` : "Unlimited active campaigns",
-    `${formatStorage(p.storageMB)} document storage`,
-    p.discountPercent ? `Extra ${p.discountPercent}% off every booking` : null,
-    p.teamSeats ? `Up to ${p.teamSeats} team members` : "Unlimited team members",
-    "Book TV, radio, press, billboard and digital",
-].filter(Boolean);
+const INCLUDED = [
+    "Book any approved TV, radio, press and billboard station",
+    "Prices straight from each station's rate card, plus VAT",
+    "5% off with 3+ stations in one checkout, 10% with 5+",
+    "1 GB of document storage",
+    "Team logins with permissions",
+];
+
+const ENTERPRISE = [
+    "Custom pricing and an extra discount on every booking",
+    "Campaign planning across many stations and states",
+    "More document storage (from 50 GB)",
+    "A dedicated account manager",
+    "Monthly or annual billing, invoiced",
+];
+
+const inputClass =
+    "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white";
 
 export default function SubscriptionView() {
     const { user } = useSession();
     const paths = advertiserPaths(user);
-    const canChange = user?.accountType === "INDIVIDUAL" || isCompanyOwner(user);
+    const canRequest = user?.accountType === "INDIVIDUAL" || isCompanyOwner(user);
 
-    const [plans, setPlans] = useState([]);
     const [me, setMe] = useState(null);
-    const [billing, setBilling] = useState("MONTHLY");
+    const [enterprise, setEnterprise] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [busy, setBusy] = useState(null);
+    const [form, setForm] = useState({ message: "", phone: "" });
+    const [sending, setSending] = useState(false);
     const [notice, setNotice] = useState(null);
 
     const load = useCallback(async () => {
@@ -42,7 +55,7 @@ export default function SubscriptionView() {
         setError(null);
         try {
             const [p, m] = await Promise.all([getPlans(), getMySubscription()]);
-            setPlans(p?.data?.plans || []);
+            setEnterprise((p?.data?.plans || []).find((x) => x.code === "ENTERPRISE") || null);
             setMe(m?.data || null);
         } catch (err) {
             setError(err);
@@ -56,169 +69,93 @@ export default function SubscriptionView() {
         load();
     }, [load]);
 
-    const choose = async (plan) => {
-        setBusy(plan.code);
+    const send = async (e) => {
+        e.preventDefault();
         setNotice(null);
-        try {
-            const res = await subscribeToPlan(plan.code, billing);
-            setNotice({ type: "success", text: `${res.message}${res.data?.testMode ? " (Test mode: no money was charged.)" : ""}` });
-            await load();
-        } catch (err) {
-            setNotice({ type: "error", text: err.message });
-        } finally {
-            setBusy(null);
+        if (form.message.trim().length < 10) {
+            setNotice({ ok: false, text: "Tell us a little about what you need (at least 10 characters)." });
+            return;
         }
-    };
-
-    const cancel = async () => {
-        if (!window.confirm("Stop your plan renewing? You keep access until the end of the current period.")) return;
-        setBusy("cancel");
+        setSending(true);
         try {
-            const res = await cancelMySubscription();
-            setNotice({ type: "success", text: res.message });
-            await load();
+            const res = await requestEnterprise({ message: form.message.trim(), phone: form.phone.trim() });
+            setNotice({ ok: true, text: res.message });
+            setForm({ message: "", phone: "" });
         } catch (err) {
-            setNotice({ type: "error", text: err.message });
+            setNotice({ ok: false, text: err?.message || "We couldn't send your request." });
         } finally {
-            setBusy(null);
+            setSending(false);
         }
     };
 
     if (loading) return <PageLoading label="Loading your plan…" />;
-    if (error) return <ApiErrorState error={error} what="your plan" onRetry={load} />;
+    if (error) return <div className="p-4 sm:p-6 lg:p-8"><ApiErrorState error={error} what="your plan" onRetry={load} /></div>;
 
     const sub = me?.subscription;
     const plan = me?.plan;
-    const usage = me?.usage || {};
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 p-4 sm:p-6 lg:p-8">
             <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
                 <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900 dark:text-white">
-                    <Gem className="h-6 w-6 text-emerald-500" /> Your plan
+                    <Gem className="h-6 w-6 text-emerald-500" /> Plan
                 </h1>
-                <p className="mt-1 text-slate-500 dark:text-slate-400">
-                    A plan lets you book airtime across stations, with document storage and booking discounts.
-                </p>
+                <p className="mt-1 text-slate-500 dark:text-slate-400">You can book airtime without a plan: you pay per spot at each station&apos;s rates. Enterprise adds a custom deal for larger advertisers.</p>
             </motion.div>
 
-            {notice && (
-                <div className={`rounded-xl border p-3 text-sm ${notice.type === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300" : "border-red-200 bg-red-50 text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300"}`} role="status">
-                    {notice.text}
+            {sub && plan && (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-500/20 dark:bg-emerald-500/10">
+                    <p className="text-sm text-emerald-800 dark:text-emerald-300">Your plan</p>
+                    <p className="mt-1 text-xl font-bold text-emerald-900 dark:text-white">{plan.name} · {sub.interval === "ANNUAL" ? "annual" : "monthly"}</p>
+                    <p className="mt-1 flex items-center gap-1.5 text-sm text-emerald-800 dark:text-emerald-300">
+                        <CalendarClock className="h-4 w-4" />
+                        {sub.cancelAtPeriodEnd ? "Ends" : "Renews"} {formatDate(sub.currentPeriodEnd)} · {formatMoney(sub.price, sub.currency)}
+                        {plan.discountPercent ? ` · extra ${plan.discountPercent}% off every booking` : ""}
+                        {plan.storageMB ? ` · ${formatStorage(plan.storageMB)} storage` : ""}
+                    </p>
                 </div>
             )}
 
-            {/* Current plan */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-                {sub ? (
-                    <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-                        <div>
-                            <p className="text-sm text-slate-500 dark:text-slate-400">Current plan</p>
-                            <p className="mt-1 text-xl font-bold text-slate-900 dark:text-white">
-                                {sub.planName} · {sub.interval === "ANNUAL" ? "annual" : "monthly"}
-                            </p>
-                            <p className="mt-1 flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400">
-                                <CalendarClock className="h-4 w-4" />
-                                {sub.cancelAtPeriodEnd ? `Ends ${formatDate(sub.currentPeriodEnd)} (won't renew)` : `Renews ${formatDate(sub.currentPeriodEnd)}`}
-                                {sub.price ? ` · ${formatMoney(sub.price, sub.currency)}` : ""}
-                            </p>
-                        </div>
-                        {plan && (
-                            <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-                                <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">
-                                    <dt className="flex items-center gap-1 text-slate-500 dark:text-slate-400"><Megaphone className="h-3.5 w-3.5" /> Active campaigns</dt>
-                                    <dd className="mt-1 font-semibold text-slate-900 dark:text-white">{usage.activeCampaigns ?? 0} / {plan.maxActiveCampaigns || "∞"}</dd>
-                                </div>
-                                <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">
-                                    <dt className="flex items-center gap-1 text-slate-500 dark:text-slate-400"><HardDrive className="h-3.5 w-3.5" /> Storage</dt>
-                                    <dd className="mt-1 font-semibold text-slate-900 dark:text-white">{formatBytes(usage.storageUsedBytes || 0)} / {formatStorage(plan.storageMB)}</dd>
-                                </div>
-                                <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">
-                                    <dt className="flex items-center gap-1 text-slate-500 dark:text-slate-400"><Percent className="h-3.5 w-3.5" /> Plan discount</dt>
-                                    <dd className="mt-1 font-semibold text-slate-900 dark:text-white">{plan.discountPercent || 0}%</dd>
-                                </div>
-                                <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">
-                                    <dt className="flex items-center gap-1 text-slate-500 dark:text-slate-400"><Users className="h-3.5 w-3.5" /> Team seats</dt>
-                                    <dd className="mt-1 font-semibold text-slate-900 dark:text-white">{plan.teamSeats || "Unlimited"}</dd>
-                                </div>
-                            </dl>
-                        )}
-                    </div>
-                ) : (
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                            <p className="text-lg font-semibold text-slate-900 dark:text-white">You don&apos;t have a plan yet</p>
-                            <p className="text-sm text-slate-500 dark:text-slate-400">
-                                Browsing stations and planning campaigns are free. Choose a plan below to book airtime.
-                            </p>
-                        </div>
-                        <Link href={paths.stations} className="text-sm font-medium text-emerald-600 dark:text-emerald-400">Browse stations →</Link>
-                    </div>
-                )}
-                {sub && canChange && !sub.cancelAtPeriodEnd && !sub.assignedByAdmin && (
-                    <button type="button" onClick={cancel} disabled={busy === "cancel"} className="mt-5 text-sm font-medium text-red-600 hover:underline disabled:opacity-50 dark:text-red-400">
-                        Stop renewal
-                    </button>
-                )}
-                {!canChange && (
-                    <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">Only the company owner can change the plan.</p>
-                )}
-            </div>
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+                    <p className="text-sm font-semibold uppercase tracking-wider text-slate-400">Included for every account</p>
+                    <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">Pay per spot</p>
+                    <ul className="mt-4 space-y-2">
+                        {INCLUDED.map((f) => (
+                            <li key={f} className="flex gap-2 text-sm text-slate-600 dark:text-slate-300"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" /> {f}</li>
+                        ))}
+                    </ul>
+                    <Link href={paths.stations} className="mt-5 inline-flex rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900">
+                        Browse stations
+                    </Link>
+                </section>
 
-            {/* Plans */}
-            <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{sub ? "Change plan" : "Choose a plan"}</h2>
-                <div className="inline-flex rounded-xl border border-slate-200 p-1 text-sm dark:border-slate-700" role="group" aria-label="Billing period">
-                    {["MONTHLY", "ANNUAL"].map((i) => (
-                        <button key={i} type="button" onClick={() => setBilling(i)} aria-pressed={billing === i} className={`rounded-lg px-3 py-1.5 font-medium ${billing === i ? "bg-emerald-500 text-white" : "text-slate-600 dark:text-slate-300"}`}>
-                            {i === "MONTHLY" ? "Monthly" : "Annual"}
-                        </button>
-                    ))}
-                </div>
-            </div>
+                <section className="rounded-2xl border-2 border-emerald-400 bg-white p-6 dark:bg-slate-900">
+                    <p className="text-sm font-semibold uppercase tracking-wider text-emerald-600">Enterprise</p>
+                    <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">Custom</p>
+                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{enterprise?.description || "For brands and agencies booking across many stations."}</p>
+                    <ul className="mt-4 space-y-2">
+                        {ENTERPRISE.map((f) => (
+                            <li key={f} className="flex gap-2 text-sm text-slate-600 dark:text-slate-300"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" /> {f}</li>
+                        ))}
+                    </ul>
 
-            <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-                {plans.map((p) => {
-                    const price = billing === "ANNUAL" ? p.annualPrice : p.monthlyPrice;
-                    const current = sub && sub.planCode === p.code && sub.interval === billing;
-                    const saving = billing === "ANNUAL" && p.monthlyPrice && p.annualPrice ? Math.round((1 - p.annualPrice / (p.monthlyPrice * 12)) * 100) : 0;
-                    return (
-                        <div key={p.code} className={`flex flex-col rounded-2xl bg-white p-6 dark:bg-slate-900 ${p.highlighted ? "border-2 border-emerald-500" : "border border-slate-200 dark:border-slate-800"}`}>
-                            {p.highlighted && <span className="mb-3 self-start rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">Most popular</span>}
-                            <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{p.name}</h3>
-                            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{p.description}</p>
-                            <p className="mt-4 text-3xl font-bold text-slate-900 dark:text-white">
-                                {p.priceOnRequest || price == null ? "Custom" : formatMoney(price, p.currency)}
-                                {!(p.priceOnRequest || price == null) && <span className="text-sm font-normal text-slate-500"> / {billing === "ANNUAL" ? "year" : "month"}</span>}
-                            </p>
-                            {saving > 0 && <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400">Save {saving}% with annual billing</p>}
-                            <ul className="mt-4 flex-1 space-y-2 text-sm">
-                                {planFeatures(p).map((f) => (
-                                    <li key={f} className="flex gap-2 text-slate-600 dark:text-slate-300"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />{f}</li>
-                                ))}
-                            </ul>
-                            {p.priceOnRequest || price == null ? (
-                                <p className="mt-5 rounded-xl bg-slate-50 p-3 text-center text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                                    Contact Media Masters and we&apos;ll set it up for you.
-                                </p>
-                            ) : (
-                                <button
-                                    type="button"
-                                    disabled={!canChange || current || busy !== null}
-                                    onClick={() => choose(p)}
-                                    className={`mt-5 inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50 ${p.highlighted ? "bg-emerald-500 text-white hover:bg-emerald-600" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"}`}
-                                >
-                                    {busy === p.code && <Loader2 className="h-4 w-4 animate-spin" />}
-                                    {current ? "Current plan" : sub ? `Switch to ${p.name}` : `Choose ${p.name}`}
-                                </button>
-                            )}
-                        </div>
-                    );
-                })}
+                    {plan?.code === "ENTERPRISE" ? (
+                        <p className="mt-5 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300">You&apos;re on Enterprise. Contact your account manager to change your deal.</p>
+                    ) : canRequest ? (
+                        <form onSubmit={send} className="mt-5 space-y-2">
+                            <textarea value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} rows={3} maxLength={1000} className={`${inputClass} resize-none`} placeholder="Tell us about your plans, e.g. stations, states and how often you advertise." aria-label="What you need" />
+                            <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={inputClass} placeholder="Phone (optional)" aria-label="Phone" />
+                            {notice && <p className={`text-sm ${notice.ok ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}`}>{notice.text}</p>}
+                            <button type="submit" disabled={sending} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-60">
+                                {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Talk to us about Enterprise
+                            </button>
+                        </form>
+                    ) : (
+                        <p className="mt-5 text-sm text-slate-500 dark:text-slate-400">Ask your company owner to request Enterprise.</p>
+                    )}
+                </section>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-                Payments run in test mode until online payment is switched on, so no money is charged yet. A plan change takes effect straight away.
-            </p>
         </div>
     );
 }

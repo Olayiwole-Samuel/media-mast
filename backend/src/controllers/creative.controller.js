@@ -2,6 +2,8 @@ const mongoose = require('mongoose');
 const Creative = require('../models/Creative');
 const Campaign = require('../models/Campaign');
 const AuditLog = require('../models/AuditLog');
+const Booking = require('../models/Booking');
+const uploads = require('../utils/fileUploads');
 const { advertiserScope, advertiserOwner, ownsRecord } = require('../utils/advertiser');
 
 // ── Load a creative and verify its campaign belongs to the caller (company or individual) ──
@@ -114,16 +116,15 @@ const getCreative = async (req, res) => {
     }
 };
 
-// ── Creative link validation (E5) ──
-// The creative flow is link-based: the client sends a URL, never file
-// bytes, and the server does not fetch the URL (no SSRF surface). So the
-// server validates the link's shape and the declared type against the
-// schema, but cannot verify what the remote file actually is.
-const CREATIVE_TYPES = Creative.schema.path('type').enumValues;
-const ALLOWED_URL_PROTOCOLS = ['http:', 'https:'];
-const MAX_URL_LENGTH = 2048;
+// ── Creative upload: the advert file itself, plus its ARCON certificate ──
+// Adverts are uploaded to Media Masters (no links): the station airs exactly
+// the file the advertiser paid to place. Every advert carries its ARCON
+// (Advertising Regulatory Council of Nigeria) pre-exposure approval: the
+// certificate number and a copy of the certificate. Both files are sent
+// first through /uploads (in parts), then attached here by their upload IDs.
 const MAX_NAME_LENGTH = 200;
 const MAX_DESCRIPTION_LENGTH = 2000;
+const CREATIVE_BUCKET = 'creatives';
 
 const SERVER_OWNED_CREATIVE_FIELDS = [
     'status',
@@ -132,13 +133,24 @@ const SERVER_OWNED_CREATIVE_FIELDS = [
     'uploadedBy',
     'uploadedAt',
     'version',
+    'fileId',
+    'arcon',
 ];
 
-const validateCreativeInput = ({ name, description, type, url }) => {
+const typeFromContentType = (contentType) => {
+    const t = String(contentType || '');
+    if (t.startsWith('video/')) return 'VIDEO';
+    if (t.startsWith('audio/')) return 'AUDIO';
+    if (t.startsWith('image/')) return 'IMAGE';
+    return 'OTHER';
+};
+
+const ARCON_NUMBER = /^[A-Za-z0-9][A-Za-z0-9 ./\-]{3,59}$/;
+
+const validateCreativeInput = ({ name, description, durationSeconds, arconCertificateNumber }) => {
     if (typeof name !== 'string' || !name.trim() || name.trim().length > MAX_NAME_LENGTH) {
         return { error: `Name must be text of 1–${MAX_NAME_LENGTH} characters` };
     }
-
     if (
         description !== undefined &&
         description !== null &&
@@ -146,48 +158,30 @@ const validateCreativeInput = ({ name, description, type, url }) => {
     ) {
         return { error: `Description must be text of at most ${MAX_DESCRIPTION_LENGTH} characters` };
     }
-
-    if (type !== undefined && (typeof type !== 'string' || !CREATIVE_TYPES.includes(type))) {
-        return { error: `Type must be one of: ${CREATIVE_TYPES.join(', ')}` };
+    if (typeof arconCertificateNumber !== 'string' || !ARCON_NUMBER.test(arconCertificateNumber.trim())) {
+        return { error: 'Enter the ARCON approval certificate number for this advert' };
     }
-
-    if (typeof url !== 'string') {
-        return { error: 'URL must be text' };
+    let seconds = null;
+    if (durationSeconds !== undefined && durationSeconds !== null && durationSeconds !== '') {
+        seconds = Number(durationSeconds);
+        if (!Number.isInteger(seconds) || seconds < 1 || seconds > 3600) {
+            return { error: 'Advert length must be a whole number of seconds (1–3600)' };
+        }
     }
-
-    const trimmedUrl = url.trim();
-    let parsed = null;
-
-    try {
-        parsed = new URL(trimmedUrl);
-    } catch {
-        parsed = null;
-    }
-
-    if (
-        !parsed ||
-        !ALLOWED_URL_PROTOCOLS.includes(parsed.protocol) ||
-        !parsed.hostname ||
-        trimmedUrl.length > MAX_URL_LENGTH
-    ) {
-        return { error: 'URL must be a valid http(s) link' };
-    }
-
-    // Embedded credentials (https://user:pass@host) are refused rather
-    // than stored and shown to everyone who can view the creative.
-    if (parsed.username || parsed.password) {
-        return { error: 'URL must not contain a username or password' };
-    }
-
     return {
         name: name.trim(),
-        description:
-            typeof description === 'string' && description.trim()
-                ? description.trim()
-                : null,
-        type: type || 'IMAGE',
-        url: trimmedUrl,
+        description: typeof description === 'string' && description.trim() ? description.trim() : null,
+        durationSeconds: seconds,
+        arconCertificateNumber: arconCertificateNumber.trim().toUpperCase(),
     };
+};
+
+// Whoever may approve creatives (owner, ALL_ACCESS, CREATIVE_APPROVE) has
+// their own uploads approved at once; other team members' uploads wait.
+const canApproveCreatives = (req) => {
+    if (req.user.accountType === 'COMPANY' || req.user.accountType === 'INDIVIDUAL') return true;
+    const perms = req.employee?.permissions || [];
+    return perms.includes('ALL_ACCESS') || perms.includes('CREATIVE_APPROVE');
 };
 
 // ── UPLOAD CREATIVE ──
@@ -195,27 +189,18 @@ const uploadCreative = async (req, res) => {
     try {
         const { companyId } = advertiserOwner(req);
         const userId = req.user.id;
-
         const body = req.body || {};
-        const {
-            campaignId,
-            name,
-            description,
-            type,
-            url,
-        } = body;
+        const { campaignId, name, description, durationSeconds, uploadId, arconCertificateNumber, arconUploadId } = body;
 
-        if (!campaignId || !name || !url) {
+        if (body.url !== undefined) {
             return res.status(400).json({
                 success: false,
-                message: 'Campaign ID, name, and URL are required',
+                message: 'Links are not accepted. Upload the advert file itself.',
             });
         }
 
-        // ── Server-owned fields (same convention as the update endpoint) ──
         const serverOwned = SERVER_OWNED_CREATIVE_FIELDS.filter((field) =>
             Object.prototype.hasOwnProperty.call(body, field));
-
         if (serverOwned.length > 0) {
             return res.status(400).json({
                 success: false,
@@ -223,86 +208,100 @@ const uploadCreative = async (req, res) => {
             });
         }
 
-        // ── File metadata ──
-        // Creatives are links: the server never receives the file, so it
-        // cannot know its real size or MIME type. Client-reported values
-        // would be stored as if they were facts, so they are refused.
-        if (
-            (body.size !== undefined && body.size !== null) ||
-            (body.mimeType !== undefined && body.mimeType !== null)
-        ) {
+        if (!campaignId || !name || !uploadId) {
             return res.status(400).json({
                 success: false,
-                message: 'File size and MIME type cannot be supplied for a creative link; the server does not receive the file.',
+                message: 'Campaign, name and the advert file are required',
+            });
+        }
+        if (!arconUploadId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Attach the ARCON approval certificate for this advert',
             });
         }
 
-        const input = validateCreativeInput({ name, description, type, url });
-
+        const input = validateCreativeInput({ name, description, durationSeconds, arconCertificateNumber });
         if (input.error) {
-            return res.status(400).json({
-                success: false,
-                message: input.error,
-            });
+            return res.status(400).json({ success: false, message: input.error });
         }
 
         if (!mongoose.isValidObjectId(campaignId)) {
-            return res.status(404).json({
-                success: false,
-                message: 'Campaign not found',
-            });
+            return res.status(404).json({ success: false, message: 'Campaign not found' });
         }
-
-        // Verify campaign belongs to company
-        const campaign = await Campaign.findOne({
-            _id: campaignId,
-            ...advertiserScope(req),
-        });
-
+        const campaign = await Campaign.findOne({ _id: campaignId, ...advertiserScope(req) });
         if (!campaign) {
-            return res.status(404).json({
-                success: false,
-                message: 'Campaign not found',
-            });
+            return res.status(404).json({ success: false, message: 'Campaign not found' });
         }
 
-        // campaignId is the one verified above; everything else is the
-        // validated input or server-set. size/mimeType stay unknown (null).
+        const media = await uploads.claimUpload(req.user, uploadId, 'CREATIVE');
+        if (media.error) return res.status(400).json({ success: false, message: `Advert file: ${media.error}` });
+        const certificate = await uploads.claimUpload(req.user, arconUploadId, 'ARCON');
+        if (certificate.error) {
+            await uploads.deleteFile(CREATIVE_BUCKET, media.file.fileId);
+            return res.status(400).json({ success: false, message: `ARCON certificate: ${certificate.error}` });
+        }
+
+        const approveNow = canApproveCreatives(req);
         const creative = await Creative.create({
             campaignId: campaign._id,
             name: input.name,
             description: input.description,
-            type: input.type,
-            url: input.url,
-            size: null,
-            mimeType: null,
-            status: 'PENDING',
+            type: typeFromContentType(media.file.contentType),
+            fileId: media.file.fileId,
+            fileName: media.file.name,
+            url: null,
+            size: media.file.size,
+            mimeType: media.file.contentType,
+            durationSeconds: input.durationSeconds,
+            arcon: {
+                certificateNumber: input.arconCertificateNumber,
+                fileId: certificate.file.fileId,
+                fileName: certificate.file.name,
+                contentType: certificate.file.contentType,
+            },
+            status: approveNow ? 'APPROVED' : 'PENDING',
+            approvedAt: approveNow ? new Date() : null,
+            approvedBy: approveNow ? String(userId) : null,
             uploadedBy: userId,
             uploadedAt: new Date(),
         });
 
-        // Audit log
         await AuditLog.create({
             userId: req.user.id,
             companyId: companyId,
             action: 'UPLOAD_CREATIVE',
             entityType: 'CREATIVE',
             entityId: creative._id,
-            metadata: { name: creative.name, type: creative.type },
+            metadata: { name: creative.name, type: creative.type, arcon: input.arconCertificateNumber },
         });
 
         res.status(201).json({
             success: true,
-            message: 'Creative uploaded successfully',
+            message: approveNow ? 'Advert uploaded and ready to book' : 'Advert uploaded; waiting for approval in your team',
             data: creative,
         });
-
     } catch (error) {
-        console.error('❌ Upload creative error:', error);
+        console.error('❌ Upload creative error:', error.name, error.message);
         res.status(500).json({
             success: false,
             message: 'Failed to upload creative',
         });
+    }
+};
+
+// ── CREATIVE FILE (play / download the advert or its ARCON certificate) ──
+const getCreativeFile = async (req, res) => {
+    try {
+        const creative = await loadCompanyCreative(req, res, 'companyId');
+        if (!creative) return;
+        const which = req.query.which === 'arcon' ? 'arcon' : 'media';
+        const fileId = which === 'arcon' ? creative.arcon?.fileId : creative.fileId;
+        if (!fileId) return res.status(404).json({ success: false, message: 'No file stored for this creative' });
+        return uploads.sendFile(res, CREATIVE_BUCKET, fileId, { download: req.query.download === '1' });
+    } catch (error) {
+        console.error('❌ Creative file error:', error.name, error.message);
+        return res.status(500).json({ success: false, message: 'Could not load the file' });
     }
 };
 
@@ -381,7 +380,18 @@ const deleteCreative = async (req, res) => {
         const creative = await loadCompanyCreative(req, res, 'companyId');
         if (!creative) return;
 
+        // A station may still need it for a booked spot.
+        const inUse = await Booking.exists({ creativeId: creative._id, status: { $nin: ['CANCELLED', 'REJECTED'] } });
+        if (inUse) {
+            return res.status(409).json({
+                success: false,
+                message: 'This advert is attached to booked spots, so it cannot be deleted.',
+            });
+        }
+
         await creative.deleteOne();
+        if (creative.fileId) await uploads.deleteFile(CREATIVE_BUCKET, creative.fileId);
+        if (creative.arcon?.fileId) await uploads.deleteFile(CREATIVE_BUCKET, creative.arcon.fileId);
 
         // Audit log
         await AuditLog.create({
@@ -485,6 +495,7 @@ module.exports = {
     getCreativesByCampaign,
     getCreative,
     uploadCreative,
+    getCreativeFile,
     updateCreative,
     deleteCreative,
     approveCreative,

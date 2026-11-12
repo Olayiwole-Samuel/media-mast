@@ -18,6 +18,8 @@ const subscriptionRoutes = require('./v1/subscription.routes');
 const documentRoutes = require('./v1/document.routes');
 const notificationRoutes = require('./v1/notification.routes');
 const insightsRoutes = require('./v1/insights.routes');
+const uploadRoutes = require('./v1/upload.routes');
+const verificationRoutes = require('./v1/verification.routes');
 const { runReminderJob } = require('../controllers/notification.controller');
 const { getPlans } = require('../controllers/subscription.controller');
 
@@ -57,6 +59,8 @@ router.use('/subscriptions', subscriptionRoutes);
 router.use('/documents', documentRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/insights', insightsRoutes);
+router.use('/uploads', uploadRoutes);
+router.use('/verification', verificationRoutes);
 // Cron (no user session): send due slot reminders. Bearer CRON_SECRET.
 router.post('/jobs/reminders', runReminderJob);
 // Public: plans and checkout discount tiers (pricing page).

@@ -18,7 +18,9 @@ Also new for plans, discounts, reminders and SMS:
 
 | Name | Value |
 |---|---|
-| `SUBSCRIPTION_REQUIRED` | `true` (advertisers need a plan to check out) |
+| `SUBSCRIPTION_REQUIRED` | `false` (booking needs no plan; Enterprise is an optional custom deal) |
+| `VAT_PERCENT` | `7.5` (added to every checkout; `0` turns it off) |
+| `FREE_STORAGE_MB` | `1024` (free document space per account) |
 | `MULTI_STATION_DISCOUNTS` | `3:5,5:10` (5% for 3+ stations, 10% for 5+) |
 | `CRON_SECRET` | A long random string (16+ characters) |
 | `TERMII_API_KEY`, `TERMII_SENDER_ID` | From termii.com; the sender ID must be approved. Without them no SMS is sent |
@@ -28,6 +30,13 @@ Also new for plans, discounts, reminders and SMS:
 `POST https://<backend>/api/v1/jobs/reminders` with the header `Authorization: Bearer <CRON_SECRET>`
 
 Each reminder is sent once, so calling it more often is safe. On a normal server (not Vercel) the backend runs it by itself every 5 minutes.
+
+## 1b. Load the real TV rate cards (once)
+From `backend/`, with `MONGODB_URI` pointing at the live database:
+
+    node src/scripts/createRateCardStations.js --yes
+
+Creates NTA (Group A), Channels Television and TVC & TVC News with their rate cards (prices from their PDFs, in `src/data/rateCards.js`). Running it again refreshes the prices. Then add managers in Admin → Stations.
 
 ## 2. Atlas
 - Audit user: change its role from `readAnyDatabase@admin` to `read` on the `test` database only.

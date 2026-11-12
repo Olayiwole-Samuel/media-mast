@@ -400,7 +400,7 @@ export default function AdminCompaniesPage() {
                                 </div>
 
                                 <h1 className="text-3xl font-semibold tracking-[-0.035em] text-slate-950 dark:text-white sm:text-4xl">
-                                    Companies
+                                    Clients &amp; agencies
                                 </h1>
                             </div>
 
@@ -673,9 +673,7 @@ export default function AdminCompaniesPage() {
                                                             </p>
 
                                                             <p className="mt-0.5 truncate text-xs text-slate-400 dark:text-slate-500">
-                                                                {
-                                                                    company.slug
-                                                                }
+                                                                {company.companyType === "AGENCY" ? "Media agency" : "Media client"} · {company.slug}
                                                             </p>
                                                         </div>
                                                     </div>

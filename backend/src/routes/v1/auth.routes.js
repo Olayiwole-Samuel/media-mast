@@ -9,7 +9,7 @@ const {
     resetPassword,
     acceptInvite,
 } = require('../../controllers/auth.controller');
-const { protect } = require('../../middleware/auth');
+const { protectAllowPending } = require('../../middleware/auth');
 const {
     validateRegister,
     validateLogin,
@@ -37,8 +37,10 @@ router.post('/reset-password', resetPasswordLimiter, validateResetPassword, rese
 router.post('/invite/accept', acceptInviteLimiter, validateAcceptInvite, acceptInvite);
 
 // ── Protected Routes ──
-router.get('/me', protect, getMe);
-router.post('/logout', protect, logout);
-router.patch('/password', protect, changePasswordLimiter, validateChangePassword, changePassword);
+// Also open to a business awaiting verification (its only other routes are
+// /verification and verification uploads).
+router.get('/me', protectAllowPending, getMe);
+router.post('/logout', protectAllowPending, logout);
+router.patch('/password', protectAllowPending, changePasswordLimiter, validateChangePassword, changePassword);
 
 module.exports = router;

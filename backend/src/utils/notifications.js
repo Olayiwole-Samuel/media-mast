@@ -72,11 +72,11 @@ const campaignName = async (booking) => {
 };
 
 // In-app notifications for several users (never throws).
-const pushInApp = async (users, { type, title, body = '', link = null }) => {
+const pushInApp = async (users, { type, title, body = '', link = null, ref = null }) => {
     const ids = [...new Set((users || []).map((u) => String(idOf(u))).filter((x) => x && x !== 'undefined' && x !== 'null'))];
     if (!ids.length) return 0;
     try {
-        await Notification.create(ids.map((userId) => ({ userId, type, title: title.slice(0, 160), body: String(body).slice(0, 600), link })));
+        await Notification.create(ids.map((userId) => ({ userId, type, title: title.slice(0, 160), body: String(body).slice(0, 600), link, ref })));
         return ids.length;
     } catch (error) {
         console.error('⚠️ In-app notification failed:', error.name);
@@ -310,11 +310,11 @@ const notifyCompanyApproved = safely('company approved', async (company, user) =
     const to = (user && user.email) || company.email;
     const { text, html } = renderEmail({
         heading: 'Your company account is approved',
-        paragraphs: [`${company.name} can now sign in to Media Masters. Choose a plan to start booking airtime across stations.`],
+        paragraphs: [`${company.name} can now use Media Masters: create campaigns, upload adverts with their ARCON certificates and book airtime across stations.`],
         action: { label: 'Sign in', url: appUrl('/login') },
     });
     await sendEmail({ to, subject: 'Your Media Masters account is approved', text, html });
-    if (user) await pushInApp([user], { type: 'ACCOUNT', title: 'Your company account is approved', body: 'Choose a plan to start booking airtime.', link: '/company/subscription' });
+    if (user) await pushInApp([user], { type: 'ACCOUNT', title: 'Your company account is approved', body: 'You can now create campaigns and book airtime.', link: '/company/dashboard' });
     return true;
 });
 
@@ -331,7 +331,73 @@ const notifyStationManagerCreated = safely('station manager created', async (use
     return sendEmail({ to: user.email, subject: 'Your Media Masters station account', text, html });
 });
 
+// ── Account verification (CAC / TIN / rate card) ──
+const KIND_LABEL = { CLIENT: 'media client', AGENCY: 'media agency', MEDIA_HOUSE: 'media house' };
+
+const notifyVerificationSubmitted = safely('verification submitted', async (verification) => {
+    const admins = await User.find({ accountType: 'ADMIN', status: 'ACTIVE' }).select('_id email');
+    const kind = KIND_LABEL[verification.accountKind] || 'business';
+    await pushInApp(admins, {
+        type: 'ACCOUNT',
+        title: `New ${kind} to verify: ${verification.businessName || 'business'}`,
+        body: 'Check their CAC number, TIN and documents, then approve or reject.',
+        link: `/admin/verifications?id=${verification._id}`,
+        ref: `verification:${verification._id}`,
+    });
+    const emails = admins.map((a) => a.email).filter(Boolean);
+    if (emails.length) {
+        const { text, html } = renderEmail({
+            heading: `${verification.businessName || 'A business'} is waiting for verification`,
+            paragraphs: [`A new ${kind} has submitted its CAC registration, TIN and documents for review.`],
+            action: { label: 'Review', url: appUrl('/admin/verifications') },
+        });
+        await sendEmail({ to: emails, subject: `Verify ${verification.businessName || 'a new business'}`, text, html });
+    }
+    return true;
+});
+
+const notifyVerificationDecision = safely('verification decision', async (verification, user, approved) => {
+    const kind = KIND_LABEL[verification.accountKind] || 'business';
+    const home = verification.accountKind === 'MEDIA_HOUSE' ? '/station' : '/company/dashboard';
+    const heading = approved
+        ? `${verification.businessName || 'Your account'} is verified`
+        : `We could not verify ${verification.businessName || 'your account'} yet`;
+    const paragraphs = approved
+        ? [verification.accountKind === 'MEDIA_HOUSE'
+            ? 'Your media house is live on Media Masters. Advertisers can now see your rates and send you bookings.'
+            : `Your ${kind} account is approved. You can now create campaigns, upload adverts and book airtime.`]
+        : [`Reason: ${verification.reviewNote || 'see your verification page'}`, 'Update your details or documents and submit again.'];
+    const { text, html } = renderEmail({
+        heading,
+        paragraphs,
+        action: { label: approved ? 'Open Media Masters' : 'Update verification', url: appUrl(approved ? home : '/verify') },
+    });
+    if (user?.email) await sendEmail({ to: user.email, subject: heading, text, html });
+    if (user) {
+        await pushInApp([user], {
+            type: 'ACCOUNT',
+            title: heading,
+            body: approved ? paragraphs[0] : paragraphs.join(' '),
+            link: approved ? home : '/verify',
+        });
+    }
+    return true;
+});
+
+// Once something has been dealt with (an approval decided, a request handled),
+// its notifications are marked read for everyone who got them.
+const resolveNotifications = async (ref) => {
+    try {
+        await Notification.updateMany({ ref, readAt: null }, { $set: { readAt: new Date() } });
+    } catch (error) {
+        console.error('⚠️ Resolve notifications failed:', error.name);
+    }
+};
+
 module.exports = {
+    resolveNotifications,
+    notifyVerificationSubmitted,
+    notifyVerificationDecision,
     notifyCheckout,
     notifyBookingStatus,
     notifyCustomerCancellation,

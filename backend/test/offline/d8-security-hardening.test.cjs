@@ -48,6 +48,9 @@ for (const [M, c] of [[User, 'users'], [Employee, 'employees'], [Company, 'compa
     M.countDocuments = async (f) => db[c].filter((d) => matches(d, f)).length;
 }
 for (const M of [Campaign, Booking, Payment]) { M.countDocuments = async () => 0; M.find = () => q(() => []); }
+// Dashboard counts of adverts and waiting approvals: none in this harness.
+Creative.countDocuments = async () => 0;
+src('models/Verification').aggregate = async () => [];
 Creative.aggregate = async () => [];
 AuditLog.find = () => q(() => []);
 AuditLog.create = async (doc) => { db.audits.push(doc); return doc; };

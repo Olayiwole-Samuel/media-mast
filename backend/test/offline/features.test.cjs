@@ -5,7 +5,9 @@
 'use strict';
 process.env.JWT_SECRET = 'features-harness-dummy-secret';
 process.env.JWT_EXPIRE = '5m';
-delete process.env.SUBSCRIPTION_REQUIRED; // on by default: this suite tests the gate
+process.env.SUBSCRIPTION_REQUIRED = 'true'; // off by default now (Enterprise is optional); this suite tests the gate
+process.env.REQUIRE_CREATIVE = 'false'; // advert + ARCON requirement is covered by verification-creatives.test.cjs
+process.env.VAT_PERCENT = '0'; // VAT is covered by verification-creatives.test.cjs; amounts here are pre-VAT
 delete process.env.ALLOW_DIRECT_BOOKING;
 delete process.env.MULTI_STATION_DISCOUNTS;
 delete process.env.CRON_SECRET;
@@ -26,6 +28,7 @@ const User = src('models/User'), Employee = src('models/Employee'), Company = sr
 const Campaign = src('models/Campaign'), Station = src('models/Station'), Booking = src('models/Booking');
 const Payment = src('models/Payment'), Creative = src('models/Creative');
 const Plan = src('models/Plan'), Subscription = src('models/Subscription'), Notification = src('models/Notification');
+const Verification = src('models/Verification');
 const documentStorage = src('utils/documentStorage');
 const { Readable } = require('stream');
 const payments = src('utils/payments');
@@ -94,7 +97,7 @@ const applyUpdate = (o, u) => {
         o[k] = (o[k] || 0) + n;
     }
 };
-const C = { users: User, employees: Employee, companies: Company, campaigns: Campaign, stations: Station, bookings: Booking, payments: Payment, creatives: Creative, plans: Plan, subscriptions: Subscription, notifications: Notification };
+const C = { users: User, employees: Employee, companies: Company, campaigns: Campaign, stations: Station, bookings: Booking, payments: Payment, creatives: Creative, plans: Plan, subscriptions: Subscription, notifications: Notification, verifications: Verification };
 for (const [c, M] of Object.entries(C)) {
     M.find = (f) => q(M, () => db[c].filter((d) => matches(d, f)));
     M.findOne = (f) => q(M, () => db[c].find((d) => matches(d, f)) || null);
@@ -195,10 +198,12 @@ const seed = () => {
             st('s3'), st('s4'), st('s5'), st('press', { type: 'PRESS' })],
         campaigns: [cp('ivy'), cp('ivyClosed', { status: 'CANCELLED' }), cp('ivyRanged', { startDate: new Date(`${day(5)}T00:00:00Z`), endDate: new Date(`${day(8)}T00:00:00Z`) }),
             cp('ian', { userId: U.indiv2 }), cp('companyA', { companyId: A, userId: U.ownerA, status: 'SUBMITTED' })],
-        bookings: [], payments: [], creatives: [], audit: [], plans: [], subscriptions: [], notifications: [],
+        bookings: [], payments: [], creatives: [], audit: [], plans: [], subscriptions: [], notifications: [], verifications: [],
     };
 };
 AuditLog.create = async (data) => { const a = new AuditLog(data); await a.validate(); db.audit.push(a.toObject()); return a; };
+// Assigning a plan marks that account's Enterprise requests handled.
+AuditLog.updateMany = async (f, u) => { const rows = db.audit.filter((r) => r.action === f.action && eq(r.userId, f.userId) && !r.metadata?.handledAt); rows.forEach((r) => { r.metadata = { ...(r.metadata || {}), handledAt: u.$set['metadata.handledAt'], handledPlan: u.$set['metadata.handledPlan'] }; }); return { modifiedCount: rows.length }; };
 
 const app = src('app');
 const tok = (id) => jwt.sign({ id: String(id), tokenVersion: 0 }, process.env.JWT_SECRET, { expiresIn: '5m' });
@@ -275,11 +280,13 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
     const aaa = card[0], late = card[2];
     r = await pay(U.indiv, 'ivy', [item('fm1', { time: '20:00' })]);
     check('RC5 Station with a rate card: no rate chosen → 400 "Choose a rate", nothing charged', isContract(r, 'items.0') && /Choose a rate/.test(r.body.message) && db.payments.length === 0, `${r.code} ${r.body.message}`);
-    r = await pay(U.indiv, 'ivy', [item('fm1', { time: '10:00', rateId: String(aaa._id) })]);
-    check('RC6 AAA rate at 10:00 (outside 19:00–22:00) → 400 naming the belt', isContract(r, 'items.0') && /AAA prime 30s rate is for spots starting between 19:00 and 22:00/.test(r.body.message), `${r.message || r.body.message}`);
     r = await pay(U.indiv, 'ivy', [item('fm1', { time: '23:30', rateId: String(late._id) }), item('fm1', { time: '20:00', rateId: String(aaa._id) })]);
     const rb = db.bookings.filter((b) => eq(b.stationId, S.fm1._id));
-    check('RC7 Late-night belt crossing midnight accepts 23:30; checkout charges rate prices (30,000 + 90,000) and records the rate on each booking', r.code === 201 && rb.length === 2 && rb.some((b) => b.price === 90000 && b.rateName === 'AAA prime 30s' && eq(b.rateId, aaa._id)) && rb.some((b) => b.price === 30000) && db.payments[0].amount === 120000, `${r.code} ${r.body.message} ${db.payments[0]?.amount}`);
+    check('RC7 Late-night belt crossing midnight books from its 22:00 start; checkout charges rate prices (30,000 + 90,000) and records the rate on each booking', r.code === 201 && rb.length === 2 && rb.some((b) => b.price === 90000 && b.rateName === 'AAA prime 30s' && eq(b.rateId, aaa._id)) && rb.some((b) => b.price === 30000 && b.time === '22:00') && db.payments[0].amount === 120000, `${r.code} ${r.body.message} ${db.payments[0]?.amount}`);
+    // The rate sets the time window: a client-sent time outside the belt is ignored, the spot is booked at the belt.
+    r = await pay(U.indiv, 'ivy', [item('fm1', { time: '10:00', rateId: String(aaa._id) })]);
+    const rc6b = db.bookings.filter((b) => eq(b.stationId, S.fm1._id)).at(-1);
+    check('RC6 AAA rate sent with 10:00 → booked at the belt (19:00 for its 3 hours), not at the client time', r.code === 201 && rc6b && rc6b.time === '19:00' && rc6b.duration === 180 && eq(rc6b.rateId, aaa._id), `${r.code} ${r.body.message} ${rc6b?.time}/${rc6b?.duration}`);
     r = await pay(U.indiv, 'ivy', [item('fm2', { rateId: String(aaa._id) })]);
     check('RC8 A rateId on a station without a rate card → 400', isContract(r, 'items.0') && /no rate card/.test(r.body.message), `${r.body.message}`);
 

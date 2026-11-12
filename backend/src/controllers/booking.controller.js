@@ -3,6 +3,8 @@ const crypto = require('crypto');
 const Booking = require('../models/Booking');
 const Campaign = require('../models/Campaign');
 const Station = require('../models/Station');
+const Creative = require('../models/Creative');
+const uploads = require('../utils/fileUploads');
 const Payment = require('../models/Payment');
 const AuditLog = require('../models/AuditLog');
 const { advertiserScope, advertiserOwner } = require('../utils/advertiser');
@@ -263,6 +265,40 @@ const resolveStationPrice = (station, { rateId, time } = {}) => {
 // Press ads don't take exclusive airtime: several can run on the same day.
 const takesExclusiveTime = (station) => station.type !== 'PRESS';
 
+// A spot bought from a rate card is placed by the station inside its belt or
+// programme, alongside other adverts, so it never blocks other bookings.
+const itemTakesExclusiveTime = (station, rate) => !rate && takesExclusiveTime(station);
+
+const slotForMinutes = (m) => {
+    if (m >= 5 * 60 && m < 12 * 60) return 'MORNING';
+    if (m >= 12 * 60 && m < 16 * 60) return 'AFTERNOON';
+    if (m >= 16 * 60 && m < 21 * 60) return 'PRIME_TIME';
+    return 'LATE_NIGHT';
+};
+
+// Booking fields that come from the chosen rate, never from the client:
+// a time belt books its window (start time, length up to midnight); a
+// placement (press size, in-programme spot, billboard) books the day.
+const rateBookingFields = (station, rate) => {
+    if (rate.kind === 'TIME_BELT' && rate.startTime && rate.endTime) {
+        const start = timeToMinutes(rate.startTime);
+        const end = timeToMinutes(rate.endTime);
+        const window = end > start ? end - start : 24 * 60 - start + end;
+        return {
+            time: rate.startTime,
+            duration: Math.max(1, Math.min(window, 24 * 60 - start)),
+            slot: slotForMinutes(start),
+            spotSeconds: rate.spotSeconds || null,
+        };
+    }
+    return {
+        time: '06:00',
+        duration: 1,
+        slot: station.type === 'PRESS' ? 'EDITION' : station.type === 'BILLBOARD' ? 'DISPLAY' : 'PROGRAMME',
+        spotSeconds: rate.spotSeconds || null,
+    };
+};
+
 const checkStationForBooking = (station, priceOptions = {}) => {
     if (station.approvalStatus !== 'APPROVED') {
         return { error: 'This station is not approved for bookings' };
@@ -474,7 +510,8 @@ const getAdminBookings = async (req, res) => {
             .populate(
                 'companyId',
                 'name email phone logo status'
-            );
+            )
+            .populate('creativeId', 'name type durationSeconds arcon.certificateNumber');
 
         return res.json({
             success: true,
@@ -1048,6 +1085,7 @@ const getStationBookings = async (req, res) => {
                 .sort({ createdAt: -1 })
                 .populate('campaignId', 'name status')
                 .populate('stationId', 'name type location')
+                .populate('creativeId', 'name type durationSeconds fileName mimeType size arcon.certificateNumber arcon.fileName')
                 .populate('companyId', 'name')
                 // Individual advertisers have no company: show their name only.
                 .populate('userId', 'name')
@@ -1343,7 +1381,30 @@ const releaseBookingForStation = async (req, booking, reason) => {
 // EXPORTS
 // ─────────────────────────────────────────────
 
+// ── Station: play / download the advert booked on its station (or its ARCON certificate) ──
+const getStationBookingCreative = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) {
+            return res.status(400).json({ success: false, message: 'Invalid booking ID' });
+        }
+        const booking = await Booking.findById(req.params.id).select('stationId creativeId');
+        const station = booking ? await Station.findById(booking.stationId).select('managerIds companyId') : null;
+        if (!booking || !station || !ownsStation(req, station)) {
+            return res.status(404).json({ success: false, message: 'Booking not found' });
+        }
+        const creative = booking.creativeId ? await Creative.findById(booking.creativeId).select('fileId arcon') : null;
+        const which = req.query.which === 'arcon' ? 'arcon' : 'media';
+        const fileId = which === 'arcon' ? creative?.arcon?.fileId : creative?.fileId;
+        if (!fileId) return res.status(404).json({ success: false, message: 'No advert file is attached to this booking' });
+        return uploads.sendFile(res, 'creatives', fileId, { download: req.query.download === '1' });
+    } catch (error) {
+        console.error('❌ Station booking creative error:', error.name, error.message);
+        return res.status(500).json({ success: false, message: 'Could not load the advert' });
+    }
+};
+
 module.exports = {
+    getStationBookingCreative,
     getBookings,
     getAdminBookings,
     getBooking,
@@ -1364,6 +1425,8 @@ module.exports = {
         checkCampaignForBooking,
         checkStationForBooking,
         takesExclusiveTime,
+        itemTakesExclusiveTime,
+        rateBookingFields,
         getBookingRange,
         findConflictingBooking,
         generateBookingReference,

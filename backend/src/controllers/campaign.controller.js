@@ -123,6 +123,7 @@ const createCampaign = async (req, res) => {
             currency,
             startDate,
             endDate,
+            clientBrand,
         } = req.body;
 
         if (!name || budget === undefined || budget === null) {
@@ -149,6 +150,8 @@ const createCampaign = async (req, res) => {
             currency: currency || 'NGN',
             startDate: startDate || null,
             endDate: endDate || null,
+            // Agencies: the client brand this campaign is for.
+            clientBrand: typeof clientBrand === 'string' && clientBrand.trim() ? clientBrand.trim().slice(0, 120) : null,
             companyId,
             userId,
             status: 'DRAFT',
@@ -216,6 +219,7 @@ const updateCampaign = async (req, res) => {
             'currency',
             'startDate',
             'endDate',
+            'clientBrand',
         ];
 
         if (updates.budget !== undefined) {

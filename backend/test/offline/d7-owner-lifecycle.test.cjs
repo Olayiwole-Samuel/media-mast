@@ -10,6 +10,10 @@ mongoose.set('bufferCommands', false); // any un-faked DB call fails instead of 
 
 const src = (p) => require(path.join(BACKEND, 'src', p));
 const User = src('models/User');
+// Verification records (self-registered businesses): none in this harness; approvals also settle them.
+const Verification = src('models/Verification');
+Verification.updateMany = async () => ({ matchedCount: 0, modifiedCount: 0 });
+Verification.find = () => ({ select: async () => [] }); // no open verification alerts to clear
 const Employee = src('models/Employee');
 const Company = src('models/Company');
 const AuditLog = src('models/AuditLog');

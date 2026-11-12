@@ -15,6 +15,14 @@ const Company = src('models/Company');
 const Campaign = src('models/Campaign');
 const Creative = src('models/Creative');
 const AuditLog = src('models/AuditLog');
+// Adverts are uploaded files with an ARCON certificate; upload storage (GridFS) is stubbed.
+const fileUploads = src('utils/fileUploads');
+fileUploads.claimUpload = async (user, uploadId, purpose) => ({ file: { uploadId, fileId: new mongoose.Types.ObjectId(), name: purpose === 'ARCON' ? 'arcon.pdf' : 'advert.mp4', contentType: purpose === 'ARCON' ? 'application/pdf' : 'video/mp4', size: 1024, purpose } });
+fileUploads.deleteFile = async () => {};
+const advertFile = () => ({ uploadId: String(new mongoose.Types.ObjectId()), arconCertificateNumber: 'ARCON/APCON/2026/0001', arconUploadId: String(new mongoose.Types.ObjectId()) });
+// No bookings in this harness: a creative is never in use when deleted.
+const Booking = src('models/Booking');
+Booking.exists = async () => null;
 
 const OID = () => new mongoose.Types.ObjectId();
 const CO_A = OID(), CO_B = OID();
@@ -177,7 +185,7 @@ const check = (label, ok, detail = '') => { results.push(ok); console.log(`${ok 
     }
     r = await call(U.ownerA, 'GET', '/api/v1/creatives/campaign/not-an-object-id');
     check('T7  Malformed campaignId on list → 404, no 500', r.code === 404, `${r.code} ${r.body.message}`);
-    r = await call(U.ownerA, 'POST', '/api/v1/creatives', { campaignId: 'junk', name: 'x', url: 'https://x' });
+    r = await call(U.ownerA, 'POST', '/api/v1/creatives', { campaignId: 'junk', name: 'x', ...advertFile() });
     check('T7  Malformed campaignId on upload → 404, no 500', r.code === 404, `${r.code} ${r.body.message}`);
 
     // ── T8 authorization ──
@@ -193,8 +201,9 @@ const check = (label, ok, detail = '') => { results.push(ok); console.log(`${ok 
 
     // ── T9 create + list ──
     seed(); audit = [];
-    r = await call(U.ownerA, 'POST', '/api/v1/creatives', { campaignId: String(CAMP_A), name: 'New spot', type: 'VIDEO', url: 'https://cdn.example/n.mp4' });
-    check('T9  Owner upload → 201, PENDING, audit UPLOAD_CREATIVE', r.code === 201 && r.body.data?.status === 'PENDING' && audit.some((a) => a.action === 'UPLOAD_CREATIVE'), `${r.code} ${r.body.message || ''}`);
+    r = await call(U.ownerA, 'POST', '/api/v1/creatives', { campaignId: String(CAMP_A), name: 'New spot', ...advertFile() });
+    // The owner may approve creatives, so their own upload is approved at once (team members without CREATIVE_APPROVE wait).
+    check('T9  Owner upload → 201, APPROVED (owner approves own uploads), audit UPLOAD_CREATIVE', r.code === 201 && r.body.data?.status === 'APPROVED' && audit.some((a) => a.action === 'UPLOAD_CREATIVE'), `${r.code} ${r.body.message || ''}`);
     r = await call(U.ownerA, 'GET', `/api/v1/creatives/campaign/${CAMP_A}`);
     check('T9  Owner list by campaign → 200 incl. new creative', r.code === 200 && r.body.data?.some((c) => c.name === 'New spot'), `${r.code} ${r.body.data?.length}`);
     r = await call(U.ownerB, 'GET', `/api/v1/creatives/campaign/${CAMP_A}`);

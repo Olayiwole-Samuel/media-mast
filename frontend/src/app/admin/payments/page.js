@@ -59,7 +59,9 @@ function PaymentDetails({ id, onClose }) {
                     <div className="space-y-5">
                         <dl className="grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-4 text-sm sm:grid-cols-4 dark:bg-slate-800">
                             <div><dt className="text-slate-500">Amount</dt><dd className="font-semibold text-slate-900 dark:text-white">{formatMoney(data.amount, data.currency)}</dd></div>
-                            <div><dt className="text-slate-500">Platform fee</dt><dd className="font-medium text-slate-900 dark:text-white">{formatMoney(data.platformFee || 0, data.currency)}</dd></div>
+                            <div><dt className="text-slate-500">Spots (rate card)</dt><dd className="font-medium text-slate-900 dark:text-white">{formatMoney(data.subtotal ?? data.amount, data.currency)}</dd></div>
+                            <div><dt className="text-slate-500">Discount</dt><dd className="font-medium text-slate-900 dark:text-white">{data.discount ? `−${formatMoney(data.discount, data.currency)} (${data.discountPercent}%)` : "—"}</dd></div>
+                            <div><dt className="text-slate-500">VAT</dt><dd className="font-medium text-slate-900 dark:text-white">{data.vat ? `${formatMoney(data.vat, data.currency)} (${data.vatPercent}%)` : "—"}</dd></div>
                             <div><dt className="text-slate-500">Refunded</dt><dd className="font-medium text-slate-900 dark:text-white">{formatMoney(data.refundAmount || 0, data.currency)}</dd></div>
                             <div><dt className="text-slate-500">Status</dt><dd><Badge status={data.status} /></dd></div>
                             <div><dt className="text-slate-500">Provider</dt><dd className="font-medium text-slate-900 dark:text-white">{data.provider}</dd></div>
@@ -149,7 +151,7 @@ export default function AdminPaymentsPage() {
                         ["Collected", t.collected],
                         ["Refunded", t.refunded],
                         ["Net", t.net],
-                        ["Platform fees", t.platformFees],
+                        ["VAT collected", t.vat || 0],
                     ].map(([label, value]) => (
                         <div key={`${currency}-${label}`} className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
                             <p className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{label}{totals.length > 1 ? ` (${currency})` : ""}</p>

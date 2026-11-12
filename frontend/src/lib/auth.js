@@ -20,8 +20,20 @@ export const ACCOUNT_HOME = {
     STATION: "/station",
 };
 
+// A business still awaiting approval (status PENDING) lives on /verify.
+export const isAwaitingVerification = (user) => user?.status === "PENDING";
+
 export const homeRouteFor = (user) =>
-    ACCOUNT_HOME[user?.accountType] || "/login";
+    isAwaitingVerification(user) ? "/verify" : ACCOUNT_HOME[user?.accountType] || "/login";
+
+// Friendly names for the three kinds of business (and older account types).
+export const accountKindLabel = (user, company) => {
+    if (user?.accountType === "STATION") return "Media house";
+    if (user?.accountType === "ADMIN") return "Admin";
+    if (user?.accountType === "INDIVIDUAL") return "Media client";
+    const type = company?.companyType || user?.companyType;
+    return type === "AGENCY" ? "Media agency" : "Media client";
+};
 
 // A COMPANY account is the company owner. Employees (EMPLOYEE accounts) get
 // access through their permissions, which the backend enforces.
@@ -105,7 +117,8 @@ export function useAuthGuard(allowedAccountTypes) {
     const signedIn = ready && hasToken && !!user;
     // An account whose password was set by an admin must replace it first.
     const mustChangePassword = signedIn && user.mustChangePassword === true;
-    const allowed = signedIn && !mustChangePassword && allowedAccountTypes.includes(user.accountType);
+    const awaitingVerification = signedIn && isAwaitingVerification(user);
+    const allowed = signedIn && !mustChangePassword && !awaitingVerification && allowedAccountTypes.includes(user.accountType);
 
     useEffect(() => {
         if (!ready) return;
@@ -121,10 +134,15 @@ export function useAuthGuard(allowedAccountTypes) {
             return;
         }
 
+        if (awaitingVerification) {
+            router.replace("/verify");
+            return;
+        }
+
         if (!allowed) {
             router.replace(homeRouteFor(user));
         }
-    }, [ready, signedIn, mustChangePassword, allowed, user, router]);
+    }, [ready, signedIn, mustChangePassword, awaitingVerification, allowed, user, router]);
 
     return { ready, user, allowed };
 }

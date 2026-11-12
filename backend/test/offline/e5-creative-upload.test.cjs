@@ -1,4 +1,5 @@
-// E5 verification harness — offline. Real app/routes/middleware/models, in-memory store, dummy JWT secret.
+// E5 (adverts) harness — offline: adverts are uploaded files that carry their ARCON certificate; links are refused.
+// Real app/routes/middleware/models/controllers, in-memory store; upload storage stubbed with the same claim rules.
 process.env.JWT_SECRET = 'e5-harness-dummy-secret';
 process.env.JWT_EXPIRE = '5m';
 delete process.env.VERCEL;
@@ -113,10 +114,31 @@ const tok = (id) => jwt.sign({ id: String(id), tokenVersion: 0 }, process.env.JW
 const results = [];
 const check = (label, ok, detail = '') => { results.push(ok); out(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail !== '' ? '  — ' + detail : ''}`); };
 
+// ── Upload storage (GridFS) stand-in: same rules as utils/fileUploads.claimUpload ──
+// A finished upload belongs to the user who made it, has one purpose, and is attached once.
+const fileUploads = src('utils/fileUploads');
+const uploadsStore = new Map();
+const deleted = [];
+const makeUpload = (owner, purpose, contentType = purpose === 'ARCON' ? 'application/pdf' : 'video/mp4', done = true) => {
+    const id = String(OID());
+    uploadsStore.set(id, { owner: String(owner), purpose, contentType, done, claimed: false, fileId: OID(), name: purpose === 'ARCON' ? 'arcon.pdf' : 'advert.mp4' });
+    return id;
+};
+fileUploads.claimUpload = async (user, uploadId, purpose) => {
+    const u = uploadsStore.get(String(uploadId));
+    if (!u || u.owner !== String(user._id || user.id) || u.purpose !== purpose || !u.done || u.claimed) {
+        return { error: 'That file upload was not found or is already in use. Upload it again.' };
+    }
+    u.claimed = true;
+    return { file: { uploadId, fileId: u.fileId, name: u.name, contentType: u.contentType, size: 2048, purpose } };
+};
+fileUploads.deleteFile = async (bucket, fileId) => { deleted.push(String(fileId)); };
+fileUploads.sendFile = async (res, bucket, fileId) => res.json({ served: String(fileId), bucket });
+
 (async () => {
     seed();
     const server = app.listen(0, '127.0.0.1'); // loopback only
-    await new Promise((resolve, reject) => server.once('listening', resolve).once('error', reject)); // address() is null until bound
+    await new Promise((resolve, reject) => server.once('listening', resolve).once('error', reject));
     const base = `http://127.0.0.1:${server.address().port}`;
     const call = async (who, method, p, body, raw) => {
         const h = {};
@@ -126,102 +148,96 @@ const check = (label, ok, detail = '') => { results.push(ok); out(`${ok ? 'PASS'
         const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch { /* */ }
         return { code: r.status, body: json || {}, text };
     };
-    const good = { campaignId: String(CA), name: 'Radio spot', type: 'AUDIO', url: 'https://cdn.example.com/spot.mp3', description: 'Morning drive' };
-    const up = (extra = {}, who = U.ownerA) => call(who, 'POST', '/api/v1/creatives', { ...good, ...extra });
+    const advert = (who = U.ownerA, extra = {}) => ({
+        campaignId: String(CA),
+        name: 'TV spot',
+        description: 'Launch advert',
+        uploadId: makeUpload(who, 'CREATIVE'),
+        arconCertificateNumber: 'arcon/aapc/2026/0042',
+        arconUploadId: makeUpload(who, 'ARCON'),
+        ...extra,
+    });
+    const up = (who = U.ownerA, extra = {}) => call(who, 'POST', '/api/v1/creatives', advert(who, extra));
     const stored = (r) => db.creatives.find((c) => eq(c._id, r.body.data?._id));
-    const rejects = async (label, extra, re, expCode = 400, who) => {
-        const n = db.creatives.length; const a = db.audit.length;
-        const r = await up(extra, who);
-        check(label, r.code === expCode && db.creatives.length === n && db.audit.length === a && (!re || re.test(r.body.message || '')), `${r.code} ${r.body.message || ''}`);
-    };
+    let r, s;
 
-    // ── Valid links ──
-    let r = await up();
-    let s = stored(r);
-    check('1   Valid https link → 201 PENDING, UPLOAD_CREATIVE audit', r.code === 201 && s?.status === 'PENDING' && s?.url === good.url && db.audit.some((a) => a.action === 'UPLOAD_CREATIVE'), `${r.code} ${r.body.message || ''}`);
-    r = await up({ url: 'http://cdn.example.com/spot.mp3' });
-    check('2   Valid http link → 201 (existing frontend allows http/https)', r.code === 201, `${r.code}`);
-    r = await up({ url: '   https://cdn.example.com/padded.png  ', type: 'IMAGE', name: '  Banner  ' });
+    // ── Happy path ──
+    r = await up(U.ownerA, { durationSeconds: 30 });
     s = stored(r);
-    check('10  Surrounding whitespace trimmed on url and name', r.code === 201 && s?.url === 'https://cdn.example.com/padded.png' && s?.name === 'Banner', `${r.code} ${s?.url}`);
-    let allTypes = true;
-    for (const t of Creative.schema.path('type').enumValues) { const x = await up({ type: t }); allTypes = allTypes && x.code === 201 && stored(x)?.type === t; }
-    check('11  Every schema type (IMAGE, VIDEO, AUDIO, DOCUMENT, OTHER) accepted', allTypes);
-    r = await up({ type: undefined });
-    check('11b Type omitted → existing default IMAGE', r.code === 201 && stored(r)?.type === 'IMAGE', `${r.code}`);
-    r = await up({}, U.uploaderA);
-    check('11c CREATIVE_UPLOAD employee → 201; uploadedBy is the caller', r.code === 201 && stored(r)?.uploadedBy === String(U.uploaderA), `${r.code}`);
+    check('1   Owner uploads an advert with its ARCON certificate → 201, ready (APPROVED)', r.code === 201 && s?.status === 'APPROVED' && s.approvedBy === String(U.ownerA), `${r.code} ${r.body.message}`);
+    check('2   File stored by reference (fileId), type from the file (VIDEO), no link', s && s.fileId && s.type === 'VIDEO' && !s.url && s.mimeType === 'video/mp4');
+    check('3   ARCON number (upper-cased) and certificate file stored on the advert', s && s.arcon?.certificateNumber === 'ARCON/AAPC/2026/0042' && s.arcon?.fileId && s.arcon?.fileName === 'arcon.pdf');
+    check('4   Advert length stored (30 s)', s?.durationSeconds === 30);
+    const auditUp = db.audit.filter((a) => a.action === 'UPLOAD_CREATIVE').pop();
+    check('5   Audit UPLOAD_CREATIVE records name, type and ARCON number', auditUp && auditUp.metadata.arcon === 'ARCON/AAPC/2026/0042' && auditUp.metadata.type === 'VIDEO');
 
-    // ── Invalid links / fields ──
-    await rejects('3   Missing URL → 400', { url: undefined }, /required/);
-    await rejects('4   Empty URL "" → 400', { url: '' }, /required/);
-    await rejects('4b  Whitespace-only URL → 400', { url: '   ' }, /valid http/);
-    for (const [lbl, v] of [['number', 42], ['array', ['https://x.example.com']], ['object', { href: 'https://x.example.com' }], ['boolean', true]]) {
-        await rejects(`5   Non-string URL (${lbl}) → 400`, { url: v }, /URL must be text/);
-    }
-    for (const [lbl, v] of [['no scheme', 'cdn.example.com/a.mp4'], ['garbage', 'not a url'], ['scheme only', 'https://'], ['relative', '/uploads/a.png']]) {
-        await rejects(`6   Malformed URL (${lbl}) → 400`, { url: v }, /valid http/);
-    }
-    for (const [n, v] of [['7', 'javascript:alert(document.cookie)'], ['7b', 'JaVaScRiPt:alert(1)'], ['8', 'data:text/html;base64,PHNjcmlwdD4='], ['9', 'file:///etc/passwd'],
-        ['9b', 'vbscript:msgbox(1)'], ['9c', 'ftp://files.example.com/a.mp4'], ['9d', 'blob:https://example.com/uuid']]) {
-        await rejects(`${n.padEnd(3)} ${v.split(':')[0]}: URL → 400`, { url: v }, /valid http/);
-    }
-    await rejects('9e  URL with embedded credentials → 400', { url: 'https://admin:secret@cdn.example.com/a.png' }, /username or password/);
-    await rejects('9f  URL longer than 2048 → 400', { url: 'https://cdn.example.com/' + 'a'.repeat(2100) }, /valid http/);
-    for (const [lbl, v] of [['lowercase', 'video'], ['unknown', 'GIF'], ['number', 3], ['array', ['VIDEO']], ['null', null]]) {
-        await rejects(`12  Invalid type (${lbl}) → 400`, { type: v }, /Type must be one of/);
-    }
-    for (const [lbl, v] of [['object', { $gt: '' }], ['number', 7], ['whitespace', '   '], ['too long', 'x'.repeat(201)]]) {
-        await rejects(`12b Invalid name (${lbl}) → 400`, { name: v }, lbl === 'whitespace' ? /Name must be text/ : null);
-    }
-    await rejects('12c Invalid description (object) → 400', { description: { a: 1 } }, /Description/);
+    r = await up(U.uploaderA);
+    check('6   Team member with CREATIVE_UPLOAD only → 201, waits for approval (PENDING)', r.code === 201 && stored(r)?.status === 'PENDING', `${r.code}`);
 
-    // ── Client metadata is never trusted ──
-    for (const [lbl, extra] of [['size 12', { size: 12 }], ['size 999999999', { size: 999999999 }], ['size -5', { size: -5 }], ['size NaN-string', { size: 'NaN' }],
-        ['size array', { size: [1] }], ['size object', { size: { $gt: 0 } }], ['mimeType video/mp4', { mimeType: 'video/mp4' }], ['mimeType array', { mimeType: ['image/png'] }]]) {
-        await rejects(`13/14 Client ${lbl} → 400, nothing stored`, extra, /size and MIME type cannot be supplied/);
+    // ── Refusals ──
+    const before = db.creatives.length;
+    r = await call(U.ownerA, 'POST', '/api/v1/creatives', { ...advert(), url: 'https://cdn.example.com/spot.mp4' });
+    check('7   A link (url) is refused → 400 "Links are not accepted", nothing stored', r.code === 400 && /Links are not accepted/.test(r.body.message) && db.creatives.length === before, `${r.code} ${r.body.message}`);
+    r = await up(U.ownerA, { arconUploadId: undefined });
+    check('8   No ARCON certificate file → 400', r.code === 400 && /ARCON/.test(r.body.message), `${r.code} ${r.body.message}`);
+    r = await up(U.ownerA, { arconCertificateNumber: '' });
+    check('9   No ARCON certificate number → 400', r.code === 400 && /ARCON/.test(r.body.message), `${r.code} ${r.body.message}`);
+    r = await up(U.ownerA, { arconCertificateNumber: '<script>' });
+    check('9b  Malformed ARCON number → 400', r.code === 400, `${r.code}`);
+    r = await up(U.ownerA, { uploadId: undefined });
+    check('10  No advert file → 400', r.code === 400 && /advert file/.test(r.body.message), `${r.code} ${r.body.message}`);
+    r = await up(U.ownerA, { uploadId: makeUpload(U.ownerB, 'CREATIVE') });
+    check("11  Someone else's upload cannot be attached → 400", r.code === 400 && /not found or is already in use/.test(r.body.message), `${r.code} ${r.body.message}`);
+    const once = makeUpload(U.ownerA, 'CREATIVE');
+    await up(U.ownerA, { uploadId: once });
+    r = await up(U.ownerA, { uploadId: once });
+    check('12  The same upload cannot be attached twice → 400', r.code === 400 && /already in use/.test(r.body.message), `${r.code}`);
+    r = await up(U.ownerA, { uploadId: makeUpload(U.ownerA, 'ARCON') });
+    check('13  A certificate upload cannot be used as the advert (purpose checked) → 400', r.code === 400, `${r.code}`);
+    r = await up(U.ownerA, { uploadId: makeUpload(U.ownerA, 'CREATIVE', 'video/mp4', false) });
+    check('14  An unfinished upload cannot be attached → 400', r.code === 400, `${r.code}`);
+    const orphan = makeUpload(U.ownerA, 'CREATIVE');
+    const orphanFile = uploadsStore.get(orphan).fileId;
+    r = await up(U.ownerA, { uploadId: orphan, arconUploadId: makeUpload(U.ownerB, 'ARCON') });
+    check('15  Bad certificate → 400 and the already-claimed advert file is removed (no orphan)', r.code === 400 && deleted.includes(String(orphanFile)), `${r.code}`);
+    for (const field of ['status', 'fileId', 'arcon', 'approvedBy']) {
+        r = await up(U.ownerA, { [field]: field === 'arcon' ? { certificateNumber: 'X' } : 'APPROVED' });
+        check(`16  Server-owned field ${field} → 400`, r.code === 400 && /set by the server/.test(r.body.message), `${r.code}`);
     }
-    r = await up({ size: null, mimeType: null });
-    s = stored(r);
-    check('13b size/mimeType null (or omitted) → accepted; stored size and mimeType are null (unknown)', r.code === 201 && s?.size === null && s?.mimeType === null, `${r.code}`);
-    check('13c No creative in the store carries client-reported size or MIME type', db.creatives.every((c) => c.size === null && c.mimeType === null));
-    for (const [n, field, v] of [['15', 'status', 'APPROVED'], ['15b', 'status', 'REJECTED'], ['16', 'approvedBy', String(U.ownerA)], ['16b', 'approvedAt', new Date().toISOString()],
-        ['16c', 'uploadedBy', String(U.ownerB)], ['16d', 'uploadedAt', '2000-01-01'], ['16e', 'version', 99]]) {
-        await rejects(`${n.padEnd(3)} Client-supplied ${field} → 400 (server-owned), nothing stored`, { [field]: v }, new RegExp(`set by the server.*${field}`));
-    }
-    check('15c Every stored creative is PENDING with no approval data', db.creatives.every((c) => c.status === 'PENDING' && c.approvedBy === null && c.approvedAt === null));
-
-    // ── Ownership (D5 preserved) ──
-    r = await up({ campaignId: String(CB) });
-    check('18  Company A → Company B campaign → 404, nothing stored', r.code === 404 && !db.creatives.some((c) => eq(c.campaignId, CB)), `${r.code}`);
-    r = await up({ campaignId: String(CA) }, U.ownerB);
-    check('18b Company B → Company A campaign → 404', r.code === 404, `${r.code}`);
-    r = await call(U.ownerA, 'POST', '/api/v1/creatives', { ...good, campaignId: String(CA), companyId: String(B) });
-    s = stored(r);
-    check('17  Stored campaignId is the verified campaign; extra companyId ignored (no such field)', r.code === 201 && eq(s?.campaignId, CA) && !('companyId' in (s || {})), `${r.code}`);
-    await rejects('19  Malformed campaignId → 404 (D5 T7 behaviour preserved; see report)', { campaignId: 'junk' }, /Campaign not found/, 404);
-    await rejects('19b Object campaignId → 404, no 500', { campaignId: { $ne: null } }, /Campaign not found/, 404);
-    await rejects('20  Missing campaign → 404', { campaignId: String(OID()) }, /Campaign not found/, 404);
-    await rejects('20b Missing campaignId → 400', { campaignId: undefined }, /required/);
-    await rejects('20c CREATIVE_VIEW-only employee → 403', {}, /permission/, 403, U.viewerA);
-    r = await call(null, 'POST', '/api/v1/creatives', good);
-    check('20d No token → 401', r.code === 401, `${r.code}`);
+    r = await up(U.ownerA, { durationSeconds: 0 });
+    check('17  Advert length 0 → 400', r.code === 400 && /length/.test(r.body.message), `${r.code}`);
+    r = await up(U.ownerA, { campaignId: String(CB) });
+    check("18  Another company's campaign → 404", r.code === 404, `${r.code}`);
+    r = await up(U.ownerA, { campaignId: 'junk' });
+    check('19  Malformed campaignId → 404, no 500', r.code === 404, `${r.code}`);
+    r = await up(U.viewerA);
+    check('20  CREATIVE_VIEW-only employee → 403', r.code === 403, `${r.code}`);
+    r = await call(null, 'POST', '/api/v1/creatives', advert());
+    check('21  No token → 401', r.code === 401, `${r.code}`);
     r = await call(U.ownerA, 'POST', '/api/v1/creatives', undefined, '{"campaignId":');
-    check('20e Malformed JSON → 400 (D8 handler), no 500', r.code === 400, `${r.code}`);
-    r = await call(U.ownerA, 'POST', '/api/v1/creatives', undefined, 'null');
-    check('20f JSON null body → 400, no 500', r.code === 400, `${r.code}`);
+    check('22  Malformed JSON → 400, no 500', r.code === 400, `${r.code}`);
 
-    // ── Audit uses server values ──
-    const last = db.audit.filter((a) => a.action === 'UPLOAD_CREATIVE').pop();
-    check('A1  UPLOAD_CREATIVE metadata = server-validated name/type only', last && JSON.stringify(Object.keys(last.metadata).sort()) === '["name","type"]');
-    // ── N8: update still limited to name/description ──
-    const cid = db.creatives[0]._id;
-    r = await call(U.ownerA, 'PUT', `/api/v1/creatives/${cid}`, { status: 'APPROVED' });
-    check('N8  Generic update still refuses status → 400', r.code === 400 && get('creatives', cid).status === 'PENDING', `${r.code}`);
-    r = await call(U.ownerA, 'PUT', `/api/v1/creatives/${cid}`, { url: 'javascript:alert(1)', size: 1 });
-    check('N8b Generic update cannot change url/size (only name/description editable)', get('creatives', cid).url === good.url && get('creatives', cid).size === null, `${r.code}`);
+    // ── Files: play / download, scoped to the owner ──
+    const first = db.creatives[0];
+    r = await call(U.ownerA, 'GET', `/api/v1/creatives/${first._id}/file`);
+    check('F1  Owner plays the advert → the advert file is served', r.code === 200 && r.body.served === String(first.fileId) && r.body.bucket === 'creatives', `${r.code}`);
+    r = await call(U.viewerA, 'GET', `/api/v1/creatives/${first._id}/file?which=arcon`);
+    check('F2  CREATIVE_VIEW team member opens the ARCON certificate → certificate served', r.code === 200 && r.body.served === String(first.arcon.fileId), `${r.code}`);
+    r = await call(U.ownerB, 'GET', `/api/v1/creatives/${first._id}/file`);
+    check('F3  Another company → 403, nothing served', r.code === 403 && !r.body.served, `${r.code}`);
+
+    // ── Edits and deletes ──
+    r = await call(U.ownerA, 'PUT', `/api/v1/creatives/${first._id}`, { fileId: String(OID()), arcon: { certificateNumber: 'X' }, name: 'TV spot v2' });
+    const after = db.creatives.find((c) => eq(c._id, first._id));
+    check('E1  Update renames only; file and ARCON certificate cannot be changed', r.code === 200 && after.name === 'TV spot v2' && eq(after.fileId, first.fileId) && after.arcon.certificateNumber === first.arcon.certificateNumber, `${r.code}`);
+    db.bookings.push({ _id: OID(), creativeId: first._id, status: 'SCHEDULED' });
+    r = await call(U.ownerA, 'DELETE', `/api/v1/creatives/${first._id}`);
+    check('E2  Advert attached to a booked spot cannot be deleted → 409', r.code === 409 && db.creatives.some((c) => eq(c._id, first._id)), `${r.code}`);
+    db.bookings[0].status = 'CANCELLED';
+    deleted.length = 0;
+    r = await call(U.ownerA, 'DELETE', `/api/v1/creatives/${first._id}`);
+    check('E3  Once its spots are cancelled it can be deleted; advert and certificate files removed', r.code === 200 && !db.creatives.some((c) => eq(c._id, first._id)) && deleted.includes(String(first.fileId)) && deleted.includes(String(first.arcon.fileId)), `${r.code}`);
     check('L1  No 500 / stack trace during the run', !logs.some((l) => /Upload creative error|CastError|ValidationError/.test(l)), logs.filter((l) => /❌/.test(l)).slice(0, 2).join(' | '));
-    check('L2  Server never fetched a creative URL (no outbound request code path)', !/fetch\(|axios|http\.get|https\.get/.test(require('fs').readFileSync(path.join(BACKEND, 'src/controllers/creative.controller.js'), 'utf8')));
 
     server.close();
     const passed = results.filter(Boolean).length;

@@ -30,7 +30,9 @@ const itemSchema = Joi.object({
     date: Joi.string().trim().max(40).required().messages({
         'any.required': 'Each item needs a date',
     }),
-    time: Joi.string().trim().pattern(/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/).required().messages({
+    // Time and length come from the chosen rate when there is one; they are
+    // needed only for a station without a rate card.
+    time: Joi.string().trim().pattern(/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/).optional().messages({
         'any.required': 'Each item needs a start time',
         'string.pattern.base': 'Invalid time. Use HH:mm format.',
     }),
@@ -38,7 +40,11 @@ const itemSchema = Joi.object({
     rateId: Joi.string().trim().pattern(OBJECT_ID).allow(null).optional().messages({
         'string.pattern.base': 'Invalid rate',
     }),
-    duration: Joi.number().integer().min(1).max(24 * 60).required().messages({
+    // The advert (uploaded with its ARCON certificate) the station should air.
+    creativeId: Joi.string().trim().pattern(OBJECT_ID).allow(null).optional().messages({
+        'string.pattern.base': 'Invalid advert',
+    }),
+    duration: Joi.number().integer().min(1).max(24 * 60).optional().messages({
         'any.required': 'Each item needs a duration',
         'number.base': 'Duration must be a whole number of minutes greater than 0',
         'number.integer': 'Duration must be a whole number of minutes greater than 0',

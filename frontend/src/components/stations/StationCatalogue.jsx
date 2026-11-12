@@ -47,7 +47,11 @@ function TypeIcon({ type, className }) {
 function StationCard({ station, onRequestBooking }) {
     const inventory = stationInventoryStatus(station.inventoryStatus);
     const place = [station.location?.city, station.location?.state].filter(Boolean).join(", ");
-    const hasPrice = Number(station.pricing?.amount) > 0;
+    // Bookings are priced from the rate card, so a station is bookable once it has rates.
+    const rates = (station.rateCard || []).filter((r) => r && r.isActive !== false && Number(r.price) > 0);
+    const hasPrice = rates.length > 0;
+    const fromPrice = hasPrice ? Math.min(...rates.map((r) => Number(r.price))) : null;
+    const lengths = [...new Set(rates.map((r) => r.spotSeconds).filter(Boolean))].sort((a, b) => b - a);
     const image = station.coverImage || station.logo;
 
     return (
@@ -112,15 +116,17 @@ function StationCard({ station, onRequestBooking }) {
 
                 <div className="mt-auto flex items-end justify-between gap-3 pt-5">
                     <div>
-                        <p className="text-[11px] uppercase tracking-wide text-slate-400">Station price</p>
+                        <p className="text-[11px] uppercase tracking-wide text-slate-400">Rate card</p>
                         <p className="text-sm font-semibold text-slate-900 dark:text-white">
                             {hasPrice ? (
                                 <>
-                                    {formatMoney(station.pricing.amount, station.pricing.currency)}{" "}
-                                    <span className="font-normal text-slate-500">{UNIT_LABEL[station.pricing.unit] || ""}</span>
+                                    From {formatMoney(fromPrice, station.pricing?.currency || "NGN")}{" "}
+                                    <span className="font-normal text-slate-500">
+                                        · {rates.length} rate{rates.length === 1 ? "" : "s"}{lengths.length ? ` · ${lengths.map((l) => `${l}s`).join("/")}` : ""}
+                                    </span>
                                 </>
                             ) : (
-                                <span className="font-normal text-slate-500">Price not listed yet</span>
+                                <span className="font-normal text-slate-500">Rates coming soon</span>
                             )}
                         </p>
                     </div>
@@ -130,10 +136,10 @@ function StationCard({ station, onRequestBooking }) {
                             type="button"
                             onClick={() => onRequestBooking(station)}
                             disabled={!hasPrice}
-                            title={hasPrice ? undefined : "This station has not set a price yet"}
+                            title={hasPrice ? undefined : "This station has not published its rates yet"}
                             className="rounded-lg bg-emerald-500 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                            Add to cart
+                            Book
                         </button>
                     )}
                 </div>

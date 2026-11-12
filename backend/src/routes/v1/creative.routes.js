@@ -4,6 +4,7 @@ const {
     getCreativesByCampaign,
     getCreative,
     uploadCreative,
+    getCreativeFile,
     updateCreative,
     deleteCreative,
     approveCreative,
@@ -41,6 +42,13 @@ router.get(
     '/:id',
     requirePermission('CREATIVE_VIEW'),
     getCreative
+);
+
+// Play or download the advert (?which=media) or its ARCON certificate (?which=arcon).
+router.get(
+    '/:id/file',
+    requirePermission('CREATIVE_VIEW'),
+    getCreativeFile
 );
 
 // ─────────────────────────────────────────────

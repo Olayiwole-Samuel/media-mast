@@ -6,6 +6,8 @@
 process.env.JWT_SECRET = 'mvp-harness-dummy-secret';
 process.env.JWT_EXPIRE = '5m';
 process.env.SUBSCRIPTION_REQUIRED = 'false'; // subscription gating is covered by subscriptions.test.cjs
+process.env.REQUIRE_CREATIVE = 'false'; // advert + ARCON requirement is covered by verification-creatives.test.cjs
+process.env.VAT_PERCENT = '0'; // VAT is covered by verification-creatives.test.cjs; amounts here are pre-VAT
 process.env.ALLOW_DIRECT_BOOKING = 'true'; // these checks exercise the direct (unpaid) booking route
 delete process.env.VERCEL;
 delete process.env.PAYMENT_PROVIDER;
@@ -21,6 +23,11 @@ const src = (p) => require(path.join(BACKEND, 'src', p));
 const User = src('models/User'), Employee = src('models/Employee'), Company = src('models/Company'), AuditLog = src('models/AuditLog');
 const Campaign = src('models/Campaign'), Station = src('models/Station'), Booking = src('models/Booking');
 const Payment = src('models/Payment'), Creative = src('models/Creative');
+// Upload storage (GridFS) stubbed: a finished upload is claimed by its ID.
+const fileUploads = src('utils/fileUploads');
+fileUploads.claimUpload = async (user, uploadId, purpose) => ({ file: { uploadId, fileId: new mongoose.Types.ObjectId(), name: purpose === 'ARCON' ? 'arcon.pdf' : 'advert.mp3', contentType: purpose === 'ARCON' ? 'application/pdf' : 'audio/mpeg', size: 1024, purpose } });
+fileUploads.deleteFile = async () => {};
+const advertFile = () => ({ uploadId: String(new mongoose.Types.ObjectId()), arconCertificateNumber: 'ARCON/APCON/2026/0001', arconUploadId: String(new mongoose.Types.ObjectId()) });
 const payments = src('utils/payments');
 
 const OID = () => new mongoose.Types.ObjectId();
@@ -211,8 +218,8 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
     check('I4  Cannot edit another individual\'s campaign → 404, unchanged', r.code === 404 && CP.ian.name === 'ian' && db.campaigns.find((c) => eq(c._id, CP.ian._id)).name === 'ian', `${r.code}`);
     r = await call(U.indiv, 'PUT', `/api/v1/campaigns/${CP.ivy._id}`, { name: 'ivy renamed' });
     check('I5  Edits own campaign → 200', r.code === 200 && db.campaigns.find((c) => eq(c._id, CP.ivy._id)).name === 'ivy renamed', `${r.code} ${logs.filter((l) => /Update campaign error/.test(l)).slice(-1)[0] || ''}`);
-    r = await call(U.indiv, 'POST', '/api/v1/creatives', { campaignId: String(CP.ivy._id), name: 'Jingle', type: 'AUDIO', url: 'https://cdn.example.com/j.mp3' });
-    const r3 = await call(U.indiv, 'POST', '/api/v1/creatives', { campaignId: String(CP.ian._id), name: 'X', type: 'AUDIO', url: 'https://cdn.example.com/x.mp3' });
+    r = await call(U.indiv, 'POST', '/api/v1/creatives', { campaignId: String(CP.ivy._id), name: 'Jingle', ...advertFile() });
+    const r3 = await call(U.indiv, 'POST', '/api/v1/creatives', { campaignId: String(CP.ian._id), name: 'X', ...advertFile() });
     check('I6  Uploads a creative to own campaign → 201; to another\'s → 404', r.code === 201 && r3.code === 404 && db.creatives.length === 1, `${r.code}/${r3.code} ${r.body.message || ''}`);
     r = await call(U.indiv, 'GET', `/api/v1/creatives/campaign/${CP.ivy._id}`);
     check('I7  Lists own campaign\'s creatives', r.code === 200 && r.body.data?.length === 1, `${r.code}`);

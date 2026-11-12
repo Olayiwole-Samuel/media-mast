@@ -232,6 +232,18 @@ export default function AdminAuditPage() {
 
             UPLOAD_CREATIVE:
                 "bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-400",
+
+            SUBMIT_VERIFICATION:
+                "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400",
+
+            APPROVE_VERIFICATION:
+                "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400",
+
+            REJECT_VERIFICATION:
+                "bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400",
+
+            REQUEST_ENTERPRISE:
+                "bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-400",
         };
 
         return (
@@ -410,7 +422,23 @@ export default function AdminAuditPage() {
         },
         {
             value: "UPLOAD_CREATIVE",
-            label: "Upload Creative",
+            label: "Upload Advert",
+        },
+        {
+            value: "SUBMIT_VERIFICATION",
+            label: "Submit Verification",
+        },
+        {
+            value: "APPROVE_VERIFICATION",
+            label: "Approve Verification",
+        },
+        {
+            value: "REJECT_VERIFICATION",
+            label: "Send Back Verification",
+        },
+        {
+            value: "REQUEST_ENTERPRISE",
+            label: "Enterprise Request",
         },
     ];
 

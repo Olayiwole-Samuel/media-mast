@@ -78,6 +78,13 @@ const {
 
 const { protect } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/role');
+const {
+    listVerifications,
+    getVerification,
+    downloadVerificationDocument,
+    approveVerification,
+    rejectVerification,
+} = require('../../controllers/verification.controller');
 
 const router = express.Router();
 
@@ -88,6 +95,17 @@ const router = express.Router();
 
 router.use(protect);
 router.use(requireAdmin);
+
+
+// ============================================================
+// ACCOUNT VERIFICATION (media clients, agencies, media houses)
+// ============================================================
+
+router.get('/verifications', listVerifications);
+router.get('/verifications/:id', getVerification);
+router.get('/verifications/:id/documents/:docId/file', downloadVerificationDocument);
+router.post('/verifications/:id/approve', approveVerification);
+router.post('/verifications/:id/reject', rejectVerification);
 
 
 // ============================================================
@@ -319,12 +337,15 @@ router.get('/payments/:id', getAdminPayment);
 
 const {
     getAdminSubscriptions,
+    getEnterpriseRequests,
     assignSubscription,
     getAdminPlans,
     updatePlan,
 } = require('../../controllers/subscription.controller');
 
 router.get('/subscriptions', getAdminSubscriptions);
+router.get('/enterprise-requests', getEnterpriseRequests);
+router.get('/analytics', require('../../controllers/analytics.controller').getAnalytics);
 router.post('/subscriptions', assignSubscription);
 router.get('/plans', getAdminPlans);
 router.put('/plans/:code', updatePlan);

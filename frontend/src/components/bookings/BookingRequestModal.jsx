@@ -3,36 +3,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
-import { X, Loader2, CheckCircle2, ShoppingCart } from "lucide-react";
-import { getCampaigns, getStations, getStationAvailability } from "@/lib/api";
+import { X, Loader2, CheckCircle2, ShoppingCart, ShieldCheck } from "lucide-react";
+import { getCampaigns, getStations, getStationAvailability, getCreatives } from "@/lib/api";
 import { calendarProblem, REASON_LABEL } from "@/lib/stationCalendar";
 import { formatMoney } from "@/lib/status";
 import { useSession } from "@/lib/auth";
 import { useCart, advertiserPaths, MAX_CART_ITEMS } from "@/lib/cart";
 
-// Add a spot (or a run of spots) to the booking cart. Nothing is sent to the
-// station yet: the advertiser pays once for the whole cart at checkout, and
-// only then do the stations receive the requests. Prices shown come from the
-// station's rate card (or its standard price); the server prices every item
-// again at checkout.
-
-const SLOTS = [
-    { value: "MORNING", label: "Morning" },
-    { value: "AFTERNOON", label: "Afternoon" },
-    { value: "PRIME_TIME", label: "Prime time" },
-    { value: "LATE_NIGHT", label: "Late night" },
-];
-
-// Time of day follows the start time, so the two can never disagree:
-// 05:00–11:59 morning, 12:00–15:59 afternoon, 16:00–20:59 prime time, otherwise late night.
-const slotForTime = (time) => {
-    const hour = Number(String(time || "").split(":")[0]);
-    if (!Number.isFinite(hour) || !time) return null;
-    if (hour >= 5 && hour < 12) return "MORNING";
-    if (hour >= 12 && hour < 16) return "AFTERNOON";
-    if (hour >= 16 && hour < 21) return "PRIME_TIME";
-    return "LATE_NIGHT";
-};
+// Add a spot (or a run of spots) to the booking cart:
+//   campaign → advert (with its ARCON certificate) → station →
+//   belt or programme → spot length (60/45/30/15 s) → date(s).
+// The price comes from the station's rate card; nobody types a price, a time
+// or a duration. The server prices every item again at checkout and takes
+// the time window from the rate. Stations receive requests after payment.
 
 const REPEATS = [
     { value: "ONCE", label: "Just once" },
@@ -40,10 +23,6 @@ const REPEATS = [
     { value: "WEEKDAYS", label: "Weekdays (Mon–Fri)" },
     { value: "WEEKLY", label: "Every week, same day" },
 ];
-
-// Press ads run in an edition, not at a time: they are booked for the day.
-const PRESS_TIME = "06:00";
-const PRESS_DURATION = 1;
 
 // Campaigns that can still receive booking requests.
 const CLOSED_CAMPAIGN = ["CANCELLED", "COMPLETED", "EXPIRED", "REFUNDED", "FAILED", "REJECTED"];
@@ -71,21 +50,46 @@ const runDates = (start, until, repeat, max) => {
     return out;
 };
 
-const rateLabel = (r) => {
-    const bits = [r.name];
-    if (r.kind === "TIME_BELT" && r.startTime) bits.push(`${r.startTime}–${r.endTime}`);
-    if (r.spotSeconds) bits.push(`${r.spotSeconds}s`);
-    return `${bits.join(" · ")} — ${formatMoney(r.price, "NGN")}`;
+const minutes = (t) => { const [h, m] = String(t || "0:0").split(":").map(Number); return h * 60 + m; };
+
+// Same rule as the server (bookingHelpers.rateBookingFields): a time belt
+// books its window; a placement (programme spot, press, billboard) the day.
+const fieldsFromRate = (station, rate) => {
+    if (rate.kind === "TIME_BELT" && rate.startTime && rate.endTime) {
+        const s = minutes(rate.startTime), e = minutes(rate.endTime);
+        const window = e > s ? e - s : 1440 - s + e;
+        const slot = s >= 300 && s < 720 ? "MORNING" : s >= 720 && s < 960 ? "AFTERNOON" : s >= 960 && s < 1260 ? "PRIME_TIME" : "LATE_NIGHT";
+        return { time: rate.startTime, duration: Math.max(1, Math.min(window, 1440 - s)), slot };
+    }
+    return { time: "06:00", duration: 1, slot: station.type === "PRESS" ? "EDITION" : station.type === "BILLBOARD" ? "DISPLAY" : "PROGRAMME" };
 };
+
+// Rate rows → choices: one per belt/programme (or press placement), each with its lengths.
+const groupRates = (rates) => {
+    const map = new Map();
+    for (const r of rates) {
+        const key = [r.name, r.kind, r.startTime || "", r.endTime || "", r.size || "", r.colour || ""].join("|");
+        if (!map.has(key)) map.set(key, { key, name: r.name, kind: r.kind, startTime: r.startTime, endTime: r.endTime, size: r.size, colour: r.colour, options: [] });
+        map.get(key).options.push(r);
+    }
+    for (const g of map.values()) g.options.sort((a, b) => (b.spotSeconds || 0) - (a.spotSeconds || 0));
+    return [...map.values()];
+};
+
+const groupLabel = (g) => (g.kind === "TIME_BELT" && g.startTime ? `${g.name}` : g.name);
+const groupHint = (g) => (g.kind === "TIME_BELT" && g.startTime ? `${g.startTime}–${g.endTime}` : g.size ? `${g.size}${g.colour === "BLACK_WHITE" ? " · black & white" : g.colour ? " · colour" : ""}` : "Inside the programme, on the day booked");
+
+const isBookable = (c) => c.status === "APPROVED" && c.fileId && c.arcon?.fileId;
 
 const inputClass =
     "w-full rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white";
 
-const EMPTY_FORM = { campaignId: "", stationId: "", rateId: "", slot: "PRIME_TIME", date: "", time: "", duration: 30, repeat: "ONCE", until: "" };
+const EMPTY_FORM = { campaignId: "", creativeId: "", stationId: "", groupKey: "", rateId: "", date: "", repeat: "ONCE", until: "" };
 
 export default function BookingRequestModal({ open, station: presetStation, campaignId: presetCampaignId, onClose, onCreated }) {
     const [campaigns, setCampaigns] = useState([]);
     const [stations, setStations] = useState([]);
+    const [creatives, setCreatives] = useState(null);
     const [loadingOptions, setLoadingOptions] = useState(false);
     const [optionsError, setOptionsError] = useState("");
     const [error, setError] = useState("");
@@ -133,16 +137,30 @@ export default function BookingRequestModal({ open, station: presetStation, camp
         };
     }, [open, presetStation, presetCampaignId]);
 
-    const selectedStation = useMemo(
-        () => stations.find((s) => s._id === form.stationId),
-        [stations, form.stationId]
-    );
-    const rates = useMemo(
-        () => (selectedStation?.rateCard || []).filter((r) => r && r.isActive !== false),
+    // The chosen campaign's adverts.
+    useEffect(() => {
+        if (!open || !form.campaignId) return undefined;
+        let cancelled = false;
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setCreatives(null);
+        getCreatives(form.campaignId)
+            .then((r) => { if (!cancelled) setCreatives(r?.data || []); })
+            .catch(() => { if (!cancelled) setCreatives([]); });
+        return () => { cancelled = true; };
+    }, [open, form.campaignId]);
+
+    const selectedStation = useMemo(() => stations.find((s) => s._id === form.stationId), [stations, form.stationId]);
+    const groups = useMemo(
+        () => groupRates((selectedStation?.rateCard || []).filter((r) => r && r.isActive !== false)),
         [selectedStation]
     );
-    const selectedRate = rates.find((r) => r._id === form.rateId) || null;
+    const group = groups.find((g) => g.key === form.groupKey) || null;
+    const rate = group?.options.find((o) => o._id === form.rateId) || null;
+    const bookable = (creatives || []).filter(isBookable);
+    const waiting = (creatives || []).filter((c) => !isBookable(c));
+    const creative = bookable.find((c) => c._id === form.creativeId) || null;
     const isPress = selectedStation?.type === "PRESS";
+    const currency = selectedStation?.pricing?.currency || "NGN";
 
     // Station calendar (weekly airtime + blocked dates) for instant feedback.
     const [availability, setAvailability] = useState(null);
@@ -155,105 +173,76 @@ export default function BookingRequestModal({ open, station: presetStation, camp
         return () => { cancelled = true; };
     }, [open, form.stationId]);
 
-    const time = isPress ? PRESS_TIME : form.time;
-    const duration = isPress ? PRESS_DURATION : Number(form.duration);
+    const timing = rate && selectedStation ? fieldsFromRate(selectedStation, rate) : null;
     const room = Math.max(0, MAX_CART_ITEMS - cart.count);
     const dates = runDates(form.date, form.until, form.repeat, Math.max(room, 1));
-    const okDates = dates.filter((d) => !calendarProblem(availability, d, time, duration));
-    const slotProblem = form.repeat === "ONCE" ? calendarProblem(availability, form.date, time, duration) : null;
+    const okDates = timing ? dates.filter((d) => !calendarProblem(availability, d, timing.time, timing.duration)) : dates;
+    const slotProblem = timing && form.repeat === "ONCE" && form.date ? calendarProblem(availability, form.date, timing.time, timing.duration) : null;
 
     const update = (field) => (e) => {
         const value = e.target.value;
         setForm((prev) => {
             const next = { ...prev, [field]: value };
-            if (field === "stationId") next.rateId = "";
-            // Picking a time belt fills in its start time when none is set yet.
-            if (field === "rateId") {
-                const r = (stations.find((s) => s._id === prev.stationId)?.rateCard || []).find((x) => x._id === value);
-                if (r?.kind === "TIME_BELT" && r.startTime && !prev.time) next.time = r.startTime;
+            if (field === "campaignId") next.creativeId = "";
+            if (field === "stationId") { next.groupKey = ""; next.rateId = ""; }
+            if (field === "groupKey") {
+                // A single length (or a press placement) is picked automatically.
+                const g = groups.find((x) => x.key === value);
+                next.rateId = g && g.options.length === 1 ? g.options[0]._id : "";
             }
             return next;
         });
     };
 
-    const unitPrice = selectedRate
-        ? Number(selectedRate.price)
-        : Number(selectedStation?.pricing?.amount) > 0 ? Number(selectedStation.pricing.amount) : null;
-
     const handleSubmit = (e) => {
         e.preventDefault();
         setError("");
 
-        if (!form.campaignId || !form.stationId || !form.date || (!isPress && !form.time)) {
-            setError(isPress ? "Please choose a campaign, publication and date." : "Please choose a campaign, station, date and start time.");
-            return;
-        }
-        if (rates.length && !selectedRate) {
-            setError("Choose a rate from this station's rate card.");
-            return;
-        }
-        if (!isPress && (!Number.isInteger(duration) || duration <= 0 || duration > 1440)) {
-            setError("Please enter how long the slot should be, in whole minutes.");
-            return;
-        }
-        if (form.repeat !== "ONCE" && (!form.until || form.until < form.date)) {
-            setError("Choose the last date for the run.");
-            return;
-        }
-        if (slotProblem) {
-            setError(slotProblem);
-            return;
-        }
-        if (cart.isFull || room === 0) {
-            setError(`Your cart already has ${MAX_CART_ITEMS} items. Check out first, then add more.`);
-            return;
-        }
-        if (!okDates.length) {
-            setError("None of those dates are available at this station.");
-            return;
-        }
+        if (!form.campaignId) return setError("Choose a campaign.");
+        if (!creative) return setError("Choose the advert to air. Upload it with its ARCON certificate on the campaign first.");
+        if (!selectedStation) return setError("Choose a station.");
+        if (!groups.length) return setError("This station hasn't published its rates yet, so it can't be booked.");
+        if (!rate) return setError(isPress ? "Choose a placement." : "Choose a belt or programme and a spot length.");
+        if (!form.date) return setError(isPress ? "Choose the publication date." : "Choose the date.");
+        if (form.repeat !== "ONCE" && (!form.until || form.until < form.date)) return setError("Choose the last date for the run.");
+        if (slotProblem) return setError(slotProblem);
+        if (cart.isFull || room === 0) return setError(`Your cart already has ${MAX_CART_ITEMS} items. Check out first, then add more.`);
+        if (!okDates.length) return setError("None of those dates are available at this station.");
 
         const campaign = campaigns.find((c) => c._id === form.campaignId);
-        const station = stations.find((s) => s._id === form.stationId);
-        if (!campaign || !station) {
-            setError("Please choose a campaign and station from the list.");
-            return;
-        }
-
         const items = okDates.slice(0, room).map((date) => ({
             campaignId: campaign._id,
             campaignName: campaign.name,
-            stationId: station._id,
-            stationName: station.name,
-            stationType: station.type || null,
-            rateId: selectedRate?._id || null,
-            rateName: selectedRate?.name || null,
-            // Display only: the server prices this again at checkout.
-            price: unitPrice,
-            currency: station.pricing?.currency || "NGN",
-            slot: isPress ? "EDITION" : slotForTime(time) || form.slot,
+            stationId: selectedStation._id,
+            stationName: selectedStation.name,
+            stationType: selectedStation.type || null,
+            rateId: rate._id,
+            rateName: rate.name,
+            spotSeconds: rate.spotSeconds || null,
+            creativeId: creative._id,
+            creativeName: creative.name,
+            // Display only: the server prices this again and sets the time window at checkout.
+            price: Number(rate.price),
+            currency,
+            slot: timing.slot,
             date,
-            time,
-            duration,
+            time: timing.time,
+            duration: timing.duration,
         }));
 
         items.forEach((item) => cart.addItem(item));
-        setAdded({
-            ...items[0],
-            count: items.length,
-            skipped: dates.length - okDates.length,
-            cut: Math.max(0, okDates.length - room),
-        });
+        setAdded({ ...items[0], count: items.length, skipped: dates.length - okDates.length, cut: Math.max(0, okDates.length - room) });
         onCreated?.(items[0]);
     };
+
+    const lengthWarning = creative?.durationSeconds && rate?.spotSeconds && creative.durationSeconds > rate.spotSeconds
+        ? `"${creative.name}" is ${creative.durationSeconds}s but this is a ${rate.spotSeconds}s spot. The station may cut it or refuse it.`
+        : null;
 
     return (
         <AnimatePresence>
             {open && (
-                <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
-                    onClick={() => onClose?.()}
-                >
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={() => onClose?.()}>
                     <motion.div
                         initial={{ opacity: 0, scale: 0.96, y: 10 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -266,19 +255,12 @@ export default function BookingRequestModal({ open, station: presetStation, camp
                     >
                         <div className="mb-5 flex items-start justify-between gap-4">
                             <div>
-                                <h2 id="booking-request-title" className="text-lg font-semibold text-slate-900 dark:text-white">
-                                    Add to cart
-                                </h2>
+                                <h2 id="booking-request-title" className="text-lg font-semibold text-slate-900 dark:text-white">Book airtime</h2>
                                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                                    Add spots from as many stations as you like, then pay once. Stations receive your requests after payment.
+                                    Pick your advert, then a slot from the station&apos;s rate card. Add spots from several stations, then pay once.
                                 </p>
                             </div>
-                            <button
-                                type="button"
-                                onClick={onClose}
-                                className="rounded-lg p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                aria-label="Close"
-                            >
+                            <button type="button" onClick={onClose} className="rounded-lg p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Close">
                                 <X className="h-5 w-5 text-slate-500" />
                             </button>
                         </div>
@@ -290,8 +272,8 @@ export default function BookingRequestModal({ open, station: presetStation, camp
                                     {added.count > 1 ? `${added.count} spots added to your cart` : "Added to your cart"}
                                 </h3>
                                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                                    {added.stationName}{added.rateName ? ` · ${added.rateName}` : ""} · {added.count > 1 ? `from ${added.date}` : `${added.date}${isPress ? "" : ` at ${added.time}`}`} ·{" "}
-                                    {added.price ? `${formatMoney(added.price, added.currency)}${added.count > 1 ? " each" : ""}` : "price confirmed at checkout"}
+                                    {added.stationName} · {added.rateName}{added.spotSeconds ? ` · ${added.spotSeconds}s` : ""} · {added.count > 1 ? `from ${added.date}` : added.date} ·{" "}
+                                    {formatMoney(added.price, added.currency)}{added.count > 1 ? " each" : ""} + VAT
                                 </p>
                                 {(added.skipped > 0 || added.cut > 0) && (
                                     <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
@@ -300,119 +282,110 @@ export default function BookingRequestModal({ open, station: presetStation, camp
                                     </p>
                                 )}
                                 <div className="mt-5 flex flex-wrap justify-center gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={onClose}
-                                        className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                                    >
-                                        Keep browsing
-                                    </button>
-                                    <Link
-                                        href={paths.cart}
-                                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600"
-                                    >
-                                        <ShoppingCart className="h-4 w-4" />
-                                        View cart ({cart.count})
+                                    <button type="button" onClick={onClose} className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Keep browsing</button>
+                                    <Link href={paths.cart} className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
+                                        <ShoppingCart className="h-4 w-4" /> View cart ({cart.count})
                                     </Link>
                                 </div>
                             </div>
                         ) : loadingOptions ? (
-                            <div className="flex justify-center py-10">
-                                <Loader2 className="h-7 w-7 animate-spin text-emerald-500" />
-                            </div>
+                            <div className="flex justify-center py-10"><Loader2 className="h-7 w-7 animate-spin text-emerald-500" /></div>
                         ) : optionsError ? (
-                            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">
-                                {optionsError}
-                            </div>
+                            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">{optionsError}</div>
                         ) : campaigns.length === 0 ? (
                             <div className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                                 You need an open campaign before you can book.{" "}
-                                <Link href={paths.campaigns} className="font-medium text-emerald-600 hover:underline dark:text-emerald-400">
-                                    Create a campaign
-                                </Link>{" "}
-                                first.
+                                <Link href={paths.campaigns} className="font-medium text-emerald-600 hover:underline dark:text-emerald-400">Create a campaign</Link> first.
                             </div>
                         ) : (
                             <form onSubmit={handleSubmit} className="space-y-4">
                                 {error && (
-                                    <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">
-                                        {error}
-                                    </div>
+                                    <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">{error}</div>
                                 )}
 
                                 <label className="block">
                                     <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Campaign</span>
                                     <select value={form.campaignId} onChange={update("campaignId")} className={inputClass} required>
                                         <option value="">Choose a campaign</option>
-                                        {campaigns.map((c) => (
-                                            <option key={c._id} value={c._id}>
-                                                {c.name}
-                                            </option>
-                                        ))}
+                                        {campaigns.map((c) => <option key={c._id} value={c._id}>{c.name}{c.clientBrand ? ` (${c.clientBrand})` : ""}</option>)}
                                     </select>
                                 </label>
+
+                                {form.campaignId && (
+                                    <div>
+                                        <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Advert to air</span>
+                                        {creatives === null ? (
+                                            <p className="text-sm text-slate-500"><Loader2 className="mr-1 inline h-4 w-4 animate-spin" /> Loading adverts…</p>
+                                        ) : bookable.length === 0 ? (
+                                            <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+                                                {waiting.length ? "This campaign's adverts aren't ready yet (waiting for approval or missing an ARCON certificate). " : "This campaign has no advert yet. "}
+                                                <Link href={paths.campaigns} className="font-medium underline">Upload the advert with its ARCON certificate</Link> on the campaign, then book.
+                                            </p>
+                                        ) : (
+                                            <select value={form.creativeId} onChange={update("creativeId")} className={inputClass} required>
+                                                <option value="">Choose the advert</option>
+                                                {bookable.map((c) => (
+                                                    <option key={c._id} value={c._id}>{c.name}{c.durationSeconds ? ` · ${c.durationSeconds}s` : ""} · ARCON {c.arcon?.certificateNumber}</option>
+                                                ))}
+                                            </select>
+                                        )}
+                                        {creative && (
+                                            <p className="mt-1 flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"><ShieldCheck className="h-3.5 w-3.5" /> ARCON approved: {creative.arcon?.certificateNumber}</p>
+                                        )}
+                                    </div>
+                                )}
 
                                 <label className="block">
                                     <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Station</span>
-                                    <select
-                                        value={form.stationId}
-                                        onChange={update("stationId")}
-                                        className={inputClass}
-                                        required
-                                        disabled={!!presetStation}
-                                    >
+                                    <select value={form.stationId} onChange={update("stationId")} className={inputClass} required disabled={!!presetStation}>
                                         <option value="">Choose a station</option>
-                                        {stations.map((s) => (
-                                            <option key={s._id} value={s._id}>
-                                                {s.name}
-                                            </option>
-                                        ))}
+                                        {stations.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
                                     </select>
                                 </label>
 
-                                {rates.length > 0 && (
+                                {selectedStation && groups.length === 0 && (
+                                    <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">This station hasn&apos;t published its rates yet, so it can&apos;t be booked.</p>
+                                )}
+
+                                {groups.length > 0 && (
                                     <label className="block">
-                                        <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Rate</span>
-                                        <select value={form.rateId} onChange={update("rateId")} className={inputClass} required>
+                                        <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{isPress ? "Placement" : "Belt or programme"}</span>
+                                        <select value={form.groupKey} onChange={update("groupKey")} className={inputClass} required>
                                             <option value="">Choose from the station&apos;s rate card</option>
-                                            {rates.map((r) => (
-                                                <option key={r._id} value={r._id}>{rateLabel(r)}</option>
-                                            ))}
+                                            {groups.map((g) => <option key={g.key} value={g.key}>{groupLabel(g)} · {groupHint(g)}</option>)}
                                         </select>
                                     </label>
                                 )}
 
-                                {selectedStation && (
-                                    <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300">
-                                        {unitPrice ? `Price: ${formatMoney(unitPrice, selectedStation.pricing?.currency)} per ${isPress ? "insertion" : "spot"}` : rates.length ? "Choose a rate to see the price" : "Price not listed"}
-                                        {selectedRate?.kind === "TIME_BELT" ? ` · spots must start between ${selectedRate.startTime} and ${selectedRate.endTime}` : ""}
-                                        . Booking 3 or more stations in one checkout gets a discount.
+                                {group && group.options.length > 1 && (
+                                    <div>
+                                        <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Spot length</span>
+                                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                            {group.options.map((o) => (
+                                                <button key={o._id} type="button" onClick={() => setForm((f) => ({ ...f, rateId: o._id }))}
+                                                    className={`rounded-lg border px-2 py-2 text-center text-sm ${form.rateId === o._id ? "border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300" : "border-slate-200 text-slate-700 hover:border-emerald-300 dark:border-slate-700 dark:text-slate-200"}`}>
+                                                    <span className="block font-semibold">{o.spotSeconds ? `${o.spotSeconds}s` : "Spot"}</span>
+                                                    <span className="block text-xs text-slate-500 dark:text-slate-400">{formatMoney(o.price, currency)}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {rate && (
+                                    <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-200">
+                                        <span className="font-semibold">{formatMoney(rate.price, currency)}</span> per {isPress ? "insertion" : `${rate.spotSeconds ? `${rate.spotSeconds}-second ` : ""}spot`} + 7.5% VAT
+                                        {rate.kind === "TIME_BELT" ? ` · airs between ${rate.startTime} and ${rate.endTime}` : ""}
+                                        <span className="block text-xs text-emerald-700 dark:text-emerald-300">Price from the station&apos;s rate card. 3+ stations in one checkout get a discount.</span>
                                     </p>
                                 )}
+                                {lengthWarning && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{lengthWarning}</p>}
 
                                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                     <label className="block">
                                         <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{isPress ? "Publication date" : "Date"}</span>
                                         <input type="date" min={todayLocal()} value={form.date} onChange={update("date")} className={inputClass} required />
                                     </label>
-                                    {!isPress && (
-                                        <>
-                                            <label className="block">
-                                                <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Start time</span>
-                                                <input type="time" value={form.time} onChange={update("time")} className={inputClass} required />
-                                            </label>
-                                            <label className="block">
-                                                <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Time of day</span>
-                                                <p className={`${inputClass} text-slate-600 dark:text-slate-300`} aria-live="polite">
-                                                    {SLOTS.find((s) => s.value === slotForTime(form.time))?.label || "Set from the start time"}
-                                                </p>
-                                            </label>
-                                            <label className="block">
-                                                <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Length (minutes)</span>
-                                                <input type="number" min="1" max="1440" value={form.duration} onChange={update("duration")} className={inputClass} required />
-                                            </label>
-                                        </>
-                                    )}
                                     <label className="block">
                                         <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Repeat</span>
                                         <select value={form.repeat} onChange={update("repeat")} className={inputClass}>
@@ -431,45 +404,24 @@ export default function BookingRequestModal({ open, station: presetStation, camp
                                     <p className="text-xs text-slate-500 dark:text-slate-400" aria-live="polite">
                                         {okDates.length} spot{okDates.length === 1 ? "" : "s"} in this run
                                         {dates.length > okDates.length ? ` (${dates.length - okDates.length} date${dates.length - okDates.length === 1 ? "" : "s"} unavailable, skipped)` : ""}
-                                        {unitPrice ? ` · ${formatMoney(unitPrice * Math.min(okDates.length, room), selectedStation?.pricing?.currency)} before any discount` : ""}
+                                        {rate ? ` · ${formatMoney(Number(rate.price) * Math.min(okDates.length, room), currency)} before VAT and any discount` : ""}
                                         {okDates.length > room ? ` · only ${room} fit in your cart` : ""}.
                                     </p>
                                 )}
 
-                                {availability && ((availability.blackouts || []).length > 0 || Object.keys(availability.airtimeHours || {}).length > 0) && (
+                                {availability && (availability.blackouts || []).length > 0 && (
                                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                                        {Object.keys(availability.airtimeHours || {}).length > 0 && (
-                                            <p>
-                                                <span className="font-medium">Airtime:</span>{" "}
-                                                {Object.entries(availability.airtimeHours).map(([d, v]) => `${d.slice(0, 3)} ${v ? `${v.start}–${v.end}` : "off"}`).join(" · ")}
-                                            </p>
-                                        )}
-                                        {(availability.blackouts || []).length > 0 && (
-                                            <p className="mt-1">
-                                                <span className="font-medium">Unavailable:</span>{" "}
-                                                {availability.blackouts.slice(0, 6).map((b) => `${b.startDate}${b.endDate !== b.startDate ? ` to ${b.endDate}` : ""}${b.startTime ? ` ${b.startTime}–${b.endTime}` : ""} (${REASON_LABEL[b.reason] || "unavailable"})`).join("; ")}
-                                                {availability.blackouts.length > 6 ? "; …" : ""}
-                                            </p>
-                                        )}
+                                        <span className="font-medium">Unavailable:</span>{" "}
+                                        {availability.blackouts.slice(0, 6).map((b) => `${b.startDate}${b.endDate !== b.startDate ? ` to ${b.endDate}` : ""}${b.startTime ? ` ${b.startTime}–${b.endTime}` : ""} (${REASON_LABEL[b.reason] || "unavailable"})`).join("; ")}
+                                        {availability.blackouts.length > 6 ? "; …" : ""}
                                     </div>
                                 )}
 
-                                {slotProblem && (
-                                    <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{slotProblem}</p>
-                                )}
+                                {slotProblem && <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{slotProblem}</p>}
 
                                 <div className="flex justify-end gap-2 pt-2">
-                                    <button
-                                        type="button"
-                                        onClick={onClose}
-                                        className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        type="submit"
-                                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600"
-                                    >
+                                    <button type="button" onClick={onClose} className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+                                    <button type="submit" className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
                                         <ShoppingCart className="h-4 w-4" />
                                         {form.repeat !== "ONCE" && okDates.length > 1 ? `Add ${Math.min(okDates.length, room)} spots` : "Add to cart"}
                                     </button>

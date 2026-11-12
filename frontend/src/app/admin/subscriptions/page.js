@@ -2,13 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Gem, Loader2, Save } from "lucide-react";
-import { getAdminSubscriptions, assignAdminSubscription, getAdminPlans, updateAdminPlan } from "@/lib/api";
+import { Gem, Loader2, Save, MessageSquare, Phone, Mail, CheckCircle2 } from "lucide-react";
+import { getAdminSubscriptions, assignAdminSubscription, getAdminPlans, updateAdminPlan, getAdminEnterpriseRequests } from "@/lib/api";
+import { announceDataChanged } from "@/lib/events";
 import { formatDate, formatMoney } from "@/lib/status";
 import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/PageState";
 
-// Subscriptions (who is on which plan, revenue), assigning a plan to an
-// account (Enterprise or a custom deal), and editing plan prices and limits.
+// Subscriptions. Booking needs no plan; Enterprise is the one plan offered in
+// the dashboard, as a custom deal. This page shows the Enterprise requests
+// advertisers send, sets up their plan (assign), lists who is on which plan,
+// and edits Enterprise's limits. Starter/Professional stay for older accounts.
 
 const input = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white";
 const card = "rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900";
@@ -91,14 +94,16 @@ export default function AdminSubscriptionsPage() {
     const [assign, setAssign] = useState({ email: "", planCode: "ENTERPRISE", interval: "ANNUAL", price: "", months: "" });
     const [assignMsg, setAssignMsg] = useState(null);
     const [busy, setBusy] = useState(false);
+    const [requests, setRequests] = useState([]);
 
     const load = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
-            const [s, p] = await Promise.all([getAdminSubscriptions(), getAdminPlans()]);
+            const [s, p, e] = await Promise.all([getAdminSubscriptions(), getAdminPlans(), getAdminEnterpriseRequests().catch(() => ({ data: [] }))]);
             setSubs(s);
             setPlans(p?.data || []);
+            setRequests(e?.data || []);
         } catch (err) {
             setError(err);
         } finally {
@@ -126,6 +131,7 @@ export default function AdminSubscriptionsPage() {
             setAssignMsg({ ok: true, text: res.message });
             setAssign((a) => ({ ...a, email: "", price: "", months: "" }));
             await load();
+            announceDataChanged();
         } catch (err) {
             setAssignMsg({ ok: false, text: err.message });
         } finally {
@@ -145,7 +151,7 @@ export default function AdminSubscriptionsPage() {
                 <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900 dark:text-white">
                     <Gem className="h-6 w-6 text-emerald-500" /> Subscriptions
                 </h1>
-                <p className="mt-1 text-slate-500 dark:text-slate-400">Who is on which plan, revenue, and plan settings.</p>
+                <p className="mt-1 text-slate-500 dark:text-slate-400">Booking needs no plan. Enterprise is a custom deal: follow up requests, set them up, and see who is on which plan.</p>
             </motion.div>
 
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -161,7 +167,41 @@ export default function AdminSubscriptionsPage() {
                 ))}
             </div>
 
-            <form onSubmit={submitAssign} className={card}>
+            <section className={card}>
+                <h2 className="flex items-center gap-2 font-semibold text-slate-900 dark:text-white">
+                    <MessageSquare className="h-5 w-5 text-emerald-500" /> Enterprise requests
+                </h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Advertisers asking for an Enterprise deal. Call them, agree terms, then set it up below.</p>
+                {requests.length === 0 ? (
+                    <p className="mt-4 text-sm text-slate-500">No requests yet.</p>
+                ) : (
+                    <ul className="mt-4 divide-y divide-slate-100 dark:divide-slate-800">
+                        {requests.map((r) => (
+                            <li key={r._id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="min-w-0">
+                                    <p className="font-medium text-slate-900 dark:text-white">{r.business || r.name || "Advertiser"}</p>
+                                    {r.message && <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">{r.message}</p>}
+                                    <p className="mt-1 flex flex-wrap gap-3 text-xs text-slate-500">
+                                        {r.email && <span className="inline-flex items-center gap-1"><Mail className="h-3.5 w-3.5" /> {r.email}</span>}
+                                        {r.phone && <span className="inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {r.phone}</span>}
+                                        <span>{formatDate(r.at)}</span>
+                                    </p>
+                                </div>
+                                {r.handledAt ? (
+                                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> Set up</span>
+                                ) : (
+                                    <button type="button" disabled={!r.email} onClick={() => { setAssign((a) => ({ ...a, email: r.email || "", planCode: "ENTERPRISE" })); document.getElementById("assign-plan")?.scrollIntoView({ behavior: "smooth" }); }}
+                                        className="shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-50">
+                                        Set up Enterprise
+                                    </button>
+                                )}
+                            </li>
+                        ))}
+                    </ul>
+                )}
+            </section>
+
+            <form id="assign-plan" onSubmit={submitAssign} className={card}>
                 <h2 className="font-semibold text-slate-900 dark:text-white">Assign a plan</h2>
                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">For Enterprise or a negotiated deal. The account gets the plan straight away; no online payment is taken.</p>
                 <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-5">
@@ -185,10 +225,18 @@ export default function AdminSubscriptionsPage() {
             </form>
 
             <div>
-                <h2 className="mb-3 font-semibold text-slate-900 dark:text-white">Plans</h2>
+                <h2 className="mb-3 font-semibold text-slate-900 dark:text-white">Enterprise plan</h2>
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                    {plans.map((p) => <PlanEditor key={`${p.code}-${p.monthlyPrice}-${p.annualPrice}-${p.storageMB}`} plan={p} onSaved={load} />)}
+                    {plans.filter((p) => p.code === "ENTERPRISE").map((p) => <PlanEditor key={`${p.code}-${p.monthlyPrice}-${p.annualPrice}-${p.storageMB}`} plan={p} onSaved={load} />)}
                 </div>
+                {plans.some((p) => p.code !== "ENTERPRISE") && (
+                    <details className="mt-4">
+                        <summary className="cursor-pointer text-sm font-medium text-slate-600 dark:text-slate-300">Older plans (not offered in the dashboard; kept for accounts already on them)</summary>
+                        <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-3">
+                            {plans.filter((p) => p.code !== "ENTERPRISE").map((p) => <PlanEditor key={`${p.code}-${p.monthlyPrice}-${p.annualPrice}-${p.storageMB}`} plan={p} onSaved={load} />)}
+                        </div>
+                    </details>
+                )}
             </div>
 
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">

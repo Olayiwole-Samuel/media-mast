@@ -25,6 +25,7 @@ import {
     getAdminCompanies,
     updateAdminStation,
 } from '@/lib/api';
+import RateCardEditor from '@/components/station/RateCardEditor';
 
 const INPUT =
     'w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500';
@@ -278,6 +279,8 @@ export default function EditStationPage() {
     const stationId = params?.id;
 
     const [form, setForm] = useState(EMPTY_FORM);
+    // The full station record, for the rate card editor (saved separately).
+    const [loadedStation, setLoadedStation] = useState(null);
     const [companies, setCompanies] = useState([]);
 
     const [loading, setLoading] = useState(true);
@@ -325,6 +328,8 @@ export default function EditStationPage() {
 
             const normalized =
                 normalizeStation(station);
+
+            setLoadedStation(station);
 
             setForm(normalized);
 
@@ -1691,6 +1696,16 @@ export default function EditStationPage() {
                         </button>
                     </div>
                 </form>
+
+                {loadedStation && (
+                    <div className="mt-8">
+                        <RateCardEditor
+                            key={loadedStation._id}
+                            station={loadedStation}
+                            title="Rate card (bookings are priced from this)"
+                        />
+                    </div>
+                )}
             </div>
         </div>
     );

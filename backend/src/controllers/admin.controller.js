@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const Company = require('../models/Company');
 const Station = require('../models/Station');
+const Verification = require('../models/Verification');
 const Campaign = require('../models/Campaign');
 const Booking = require('../models/Booking');
 const Payment = require('../models/Payment');
@@ -32,7 +33,7 @@ const {
     canTransitionCampaignStatus,
 } = require('../utils/campaignStatus');
 const crypto = require('crypto');
-const { notifyCompanyApproved, notifyNewStation } = require('../utils/notifications');
+const { notifyCompanyApproved, notifyNewStation, resolveNotifications } = require('../utils/notifications');
 
 // ============================================================
 // HELPERS
@@ -249,6 +250,12 @@ const getDashboardStats = async (req, res) => {
             totalPayments,
             pendingCompanies,
             pendingStations,
+            mediaClients,
+            mediaAgencies,
+            liveStations,
+            totalCreatives,
+            arconCreatives,
+            awaitingByKind,
         ] = await Promise.all([
             User.countDocuments(),
             Company.countDocuments(),
@@ -262,7 +269,20 @@ const getDashboardStats = async (req, res) => {
             Station.countDocuments({
                 approvalStatus: 'PENDING',
             }),
+            // The three kinds of business (companies without a type are clients).
+            Company.countDocuments({ companyType: { $ne: 'AGENCY' } }),
+            Company.countDocuments({ companyType: 'AGENCY' }),
+            Station.countDocuments({ approvalStatus: 'APPROVED', isActive: true }),
+            Creative.countDocuments(),
+            Creative.countDocuments({ 'arcon.fileId': { $ne: null } }),
+            // Businesses that have sent their CAC/TIN/documents and wait for review.
+            Verification.aggregate([
+                { $match: { status: 'SUBMITTED' } },
+                { $group: { _id: '$accountKind', n: { $sum: 1 } } },
+            ]),
         ]);
+        const awaiting = Object.fromEntries(awaitingByKind.map((r) => [r._id, r.n]));
+        const awaitingApproval = Object.values(awaiting).reduce((t, n) => t + n, 0);
 
         const recentActivity =
             await AuditLog.find()
@@ -300,6 +320,15 @@ const getDashboardStats = async (req, res) => {
                     totalRevenue,
                     pendingCompanies,
                     pendingStations,
+                    mediaClients,
+                    mediaAgencies,
+                    liveStations,
+                    totalCreatives,
+                    arconCreatives,
+                    awaitingApproval,
+                    awaitingClients: awaiting.CLIENT || 0,
+                    awaitingAgencies: awaiting.AGENCY || 0,
+                    awaitingMediaHouses: awaiting.MEDIA_HOUSE || 0,
                 },
                 recentActivity,
             },
@@ -984,6 +1013,12 @@ const updateCompanyVerification = async (
         }
 
         if (normalizedStatus === 'APPROVED') {
+            // Approving here also settles the company's verification record (and its alerts).
+            await resolveVerificationAlerts({ companyId: company._id, status: { $ne: 'APPROVED' } });
+            await Verification.updateMany(
+                { companyId: company._id, status: { $ne: 'APPROVED' } },
+                { $set: { status: 'APPROVED', reviewNote: null, reviewedAt: new Date(), reviewedBy: req.user._id } }
+            );
             await notifyCompanyApproved(company, companyUser);
         }
 
@@ -2446,9 +2481,26 @@ const getStationById = async (req, res) => {
             });
         }
 
+        // Who runs it, and (for a self-registered media house) its verification.
+        const [managers, verification] = await Promise.all([
+            User.find({ _id: { $in: station.managerIds || [] } }).select('name email status lastLogin').lean(),
+            Verification.findOne({ stationId: station._id })
+                .select('businessName registrationNumber taxId status submittedAt reviewedAt reviewNote documents')
+                .lean(),
+        ]);
+
         return res.json({
             success: true,
-            data: station,
+            data: {
+                ...station,
+                managers: managers || [],
+                verification: verification
+                    ? {
+                        ...verification,
+                        documents: (verification.documents || []).map((d) => ({ _id: d._id, kind: d.kind, name: d.name, size: d.size })),
+                    }
+                    : null,
+            },
         });
     } catch (error) {
         console.error('❌ Get station error:', error);
@@ -2825,6 +2877,12 @@ const updateStation = async (req, res) => {
 // APPROVE STATION
 // ─────────────────────────────────────────────────────────────
 
+// Mark the "please verify" alerts read for the verification records matching filter.
+const resolveVerificationAlerts = async (filter) => {
+    const open = await Verification.find(filter).select('_id');
+    for (const v of open || []) await resolveNotifications(`verification:${v._id}`);
+};
+
 const approveStation = async (req, res) => {
     try {
         const { id } = req.params;
@@ -2855,6 +2913,18 @@ const approveStation = async (req, res) => {
         }
 
         await station.save();
+
+        // A self-registered media house: approving its station approves the
+        // account too (and settles its verification record and its alerts).
+        await resolveVerificationAlerts({ stationId: station._id, status: { $ne: 'APPROVED' } });
+        await Verification.updateMany(
+            { stationId: station._id, status: { $ne: 'APPROVED' } },
+            { $set: { status: 'APPROVED', reviewNote: null, reviewedAt: new Date(), reviewedBy: req.user._id } }
+        );
+        await User.updateMany(
+            { _id: { $in: station.managerIds || [] }, accountType: 'STATION', status: 'PENDING' },
+            { $set: { status: 'ACTIVE' } }
+        );
 
         await logAudit(req, {
             companyId: station.companyId,

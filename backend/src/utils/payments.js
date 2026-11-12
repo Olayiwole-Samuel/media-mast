@@ -73,7 +73,15 @@ const getPlatformFeePercent = () => {
     return Number.isFinite(raw) && raw >= 0 && raw <= 50 ? raw : 0;
 };
 
+// Value Added Tax added to every checkout (Nigeria: 7.5%). VAT_PERCENT=0 turns it off.
+const getVatPercent = () => {
+    if (process.env.VAT_PERCENT === undefined || process.env.VAT_PERCENT === '') return 7.5;
+    const raw = Number(process.env.VAT_PERCENT);
+    return Number.isFinite(raw) && raw >= 0 && raw <= 50 ? raw : 7.5;
+};
+
 module.exports = {
+    getVatPercent,
     getPaymentProvider,
     setPaymentProviderForTests,
     generatePaymentReference,

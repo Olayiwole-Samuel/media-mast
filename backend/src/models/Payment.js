@@ -44,6 +44,17 @@ const PaymentSchema = new mongoose.Schema({
         default: 0,
         min: 0,
     },
+    // Value Added Tax charged on the discounted spots (Nigeria: 7.5%).
+    vat: {
+        type: Number,
+        default: 0,
+        min: 0,
+    },
+    vatPercent: {
+        type: Number,
+        default: 0,
+        min: 0,
+    },
     currency: {
         type: String,
         default: 'NGN',

@@ -1,6 +1,8 @@
 const User = require('../models/User');
 const Company = require('../models/Company');
 const Employee = require('../models/Employee');
+const Station = require('../models/Station');
+const Verification = require('../models/Verification');
 const AuditLog = require('../models/AuditLog');
 const jwt = require('jsonwebtoken');
 const {
@@ -47,10 +49,12 @@ const registrationConflict = (res, message) =>
     });
 
 const register = async (req, res) => {
-    const created = { employeeId: null, userId: null, companyId: null };
+    const created = { employeeId: null, userId: null, companyId: null, stationId: null, verificationId: null };
 
     const rollback = async () => {
         const steps = [
+            created.verificationId && (() => Verification.findByIdAndDelete(created.verificationId)),
+            created.stationId && (() => Station.findByIdAndDelete(created.stationId)),
             created.employeeId && (() => Employee.findByIdAndDelete(created.employeeId)),
             created.userId && (() => User.findByIdAndDelete(created.userId)),
             created.companyId && (() => Company.findByIdAndDelete(created.companyId)),
@@ -66,7 +70,10 @@ const register = async (req, res) => {
     };
 
     try {
-        const { accountType, email, password, name, companyName, phone } = req.validatedBody;
+        const { accountType, email, password, name, companyName, phone, mediaType, state, city } = req.validatedBody;
+        // Media clients and agencies are companies (a brand, or an agency
+        // booking for brands); "company" is the older name for a client.
+        const isCompanySignup = ['company', 'client', 'agency'].includes(accountType);
 
         console.log('📝 Registration attempt:', { accountType, email, name });
 
@@ -95,8 +102,8 @@ const register = async (req, res) => {
             console.log('✅ Individual user created:', user.email);
         }
 
-        // ── COMPANY Registration ──
-        if (accountType === 'company') {
+        // ── COMPANY Registration (media client / media agency) ──
+        if (isCompanySignup) {
             // Check if company exists
             const existingCompany = await Company.findOne({ email });
 
@@ -124,6 +131,7 @@ const register = async (req, res) => {
                 slug,
                 email,
                 phone: phone || null,
+                companyType: accountType === 'agency' ? 'AGENCY' : 'CLIENT',
                 status: 'PENDING',
             });
             created.companyId = company._id;
@@ -150,6 +158,57 @@ const register = async (req, res) => {
                 isActive: true,
             });
             created.employeeId = ownerEmployee._id;
+
+            // Verification record: the owner signs in to it while PENDING.
+            const verification = await Verification.create({
+                userId: user._id,
+                accountKind: accountType === 'agency' ? 'AGENCY' : 'CLIENT',
+                companyId: company._id,
+                businessName: company.name,
+                phone: phone || '',
+            });
+            created.verificationId = verification._id;
+        }
+
+        // ── MEDIA HOUSE Registration (TV / radio / press / billboard owner) ──
+        if (accountType === 'media_house') {
+            let stationSlug = generateSlug(companyName) || 'media-house';
+            for (let n = 1; await Station.exists({ slug: stationSlug }); n++) {
+                stationSlug = `${generateSlug(companyName) || 'media-house'}-${n}`;
+            }
+
+            user = await User.create({
+                email,
+                password,
+                name,
+                accountType: 'STATION',
+                status: 'PENDING',
+                companyId: null,
+            });
+            created.userId = user._id;
+
+            // Hidden from advertisers until an admin approves the verification.
+            const station = await Station.create({
+                name: companyName,
+                slug: stationSlug,
+                type: mediaType,
+                email,
+                phone: phone || null,
+                location: { city: city || null, state: state || null, country: 'Nigeria' },
+                approvalStatus: 'PENDING',
+                isActive: false,
+                managerIds: [user._id],
+            });
+            created.stationId = station._id;
+
+            const verification = await Verification.create({
+                userId: user._id,
+                accountKind: 'MEDIA_HOUSE',
+                stationId: station._id,
+                businessName: companyName,
+                phone: phone || '',
+            });
+            created.verificationId = verification._id;
         }
 
         // ── Check if user was created ──
@@ -189,7 +248,7 @@ const register = async (req, res) => {
                         action: 'REGISTER',
                         entityType: 'USER',
                         entityId: user._id,
-                        metadata: { accountType: 'INDIVIDUAL' },
+                        metadata: { accountType: user.accountType },
                     }
             );
         } catch (auditError) {
@@ -201,7 +260,7 @@ const register = async (req, res) => {
             success: true,
             message: accountType === 'individual'
                 ? 'Account created successfully'
-                : 'Company registered. Awaiting approval.',
+                : 'Account created. Submit your verification details for approval.',
             data: {
                 user: {
                     id: user._id,
@@ -209,6 +268,7 @@ const register = async (req, res) => {
                     email: user.email,
                     accountType: user.accountType,
                     companyId: user.companyId,
+                    status: user.status,
                 },
                 company: company ? {
                     id: company._id,
@@ -274,11 +334,16 @@ const login = async (req, res) => {
             });
         }
 
-        if (user.status !== 'ACTIVE') {
+        // A business awaiting approval (company owner or media house) signs
+        // in to its verification page; everything else stays closed to it.
+        const awaitingVerification = user.status === 'PENDING'
+            && ['COMPANY', 'STATION'].includes(user.accountType);
+
+        if (user.status !== 'ACTIVE' && !awaitingVerification) {
             return res.status(403).json({
                 success: false,
-                message: user.status === 'PENDING' && user.accountType === 'COMPANY'
-                    ? 'Your account is awaiting approval. We will email you once it has been reviewed.'
+                message: user.status === 'PENDING'
+                    ? 'Your account is awaiting approval.'
                     : 'Account is suspended or deactivated',
             });
         }

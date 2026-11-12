@@ -16,6 +16,9 @@ const NotificationSchema = new mongoose.Schema(
         body: { type: String, default: '', maxlength: 600 },
         link: { type: String, default: null, maxlength: 300 }, // a path in the app, e.g. /bookings
         readAt: { type: Date, default: null },
+        // What the notification is about (e.g. "verification:<id>"), so it can be
+        // marked read for everyone once that thing is dealt with.
+        ref: { type: String, default: null, maxlength: 80 },
     },
     { timestamps: true }
 );

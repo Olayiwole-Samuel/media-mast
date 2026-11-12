@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bell, CheckCheck } from "lucide-react";
 import { getNotifications, markNotificationRead, markAllNotificationsRead } from "@/lib/api";
+import { DATA_CHANGED } from "@/lib/events";
 
 // The header bell: unread count, the latest notifications, mark as read.
 // Checks again every minute and whenever the window regains focus.
@@ -41,7 +42,9 @@ export default function NotificationBell() {
         const id = setInterval(load, POLL_MS);
         const onFocus = () => load();
         window.addEventListener("focus", onFocus);
-        return () => { clearInterval(id); window.removeEventListener("focus", onFocus); };
+        // Something was dealt with elsewhere on the page (e.g. an approval): refresh now.
+        window.addEventListener(DATA_CHANGED, onFocus);
+        return () => { clearInterval(id); window.removeEventListener("focus", onFocus); window.removeEventListener(DATA_CHANGED, onFocus); };
     }, [load]);
 
     useEffect(() => {

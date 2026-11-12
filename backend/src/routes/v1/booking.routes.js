@@ -8,6 +8,7 @@ const {
     getBookingCancellationQuote,
     resubmitBooking,
     getStationBookings,
+    getStationBookingCreative,
     acceptBooking,
     rejectBooking,
     requestBookingChanges,
@@ -54,6 +55,13 @@ router.get(
     '/station',
     requireStationOperator('BOOKING_VIEW'),
     getStationBookings
+);
+
+// The advert (or ?which=arcon its ARCON certificate) for a booking on the caller's station.
+router.get(
+    '/:id/creative',
+    requireStationOperator('BOOKING_VIEW'),
+    getStationBookingCreative
 );
 
 router.get(

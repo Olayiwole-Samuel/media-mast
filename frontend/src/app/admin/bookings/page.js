@@ -979,15 +979,21 @@ export default function AdminBookingsPage() {
                                                 <Timer className="h-4 w-4" />
 
                                                 <span className="text-[10px] font-bold uppercase tracking-[0.12em]">
-                                                    Duration
+                                                    {selectedBooking.rateName ? "Rate booked" : "Duration"}
                                                 </span>
                                             </div>
 
                                             <p className="text-base font-semibold text-slate-900 dark:text-white">
-                                                {selectedBooking.duration ||
-                                                    0}{" "}
-                                                minutes
+                                                {selectedBooking.rateName
+                                                    ? `${selectedBooking.rateName}${selectedBooking.spotSeconds ? ` · ${selectedBooking.spotSeconds}s spot` : ""}`
+                                                    : `${selectedBooking.duration || 0} minutes`}
                                             </p>
+                                            {selectedBooking.creativeId?.name && (
+                                                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                                    Advert: {selectedBooking.creativeId.name}
+                                                    {selectedBooking.creativeId.arcon?.certificateNumber ? ` · ARCON ${selectedBooking.creativeId.arcon.certificateNumber}` : ""}
+                                                </p>
+                                            )}
                                         </div>
 
                                         <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 dark:border-emerald-500/20 dark:bg-emerald-500/10">

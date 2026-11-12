@@ -21,9 +21,32 @@ const CreativeSchema = new mongoose.Schema({
         enum: ['IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT', 'OTHER'],
         default: 'IMAGE',
     },
+    // The advert file, uploaded to Media Masters (GridFS "creatives" bucket).
+    // Older creatives may only have a url; new ones always have a file.
+    fileId: {
+        type: mongoose.Schema.Types.ObjectId,
+        default: null,
+    },
+    fileName: {
+        type: String,
+        default: null,
+    },
     url: {
         type: String,
-        required: [true, 'File URL is required'],
+        default: null,
+    },
+    // Length of a video/audio advert in seconds (matches the spot bought).
+    durationSeconds: {
+        type: Number,
+        default: null,
+    },
+    // ARCON (Advertising Regulatory Council of Nigeria) pre-exposure approval:
+    // every advert must carry its certificate before it can be uploaded.
+    arcon: {
+        certificateNumber: { type: String, trim: true, maxlength: 60, default: null },
+        fileId: { type: mongoose.Schema.Types.ObjectId, default: null },
+        fileName: { type: String, default: null },
+        contentType: { type: String, default: null },
     },
     size: {
         type: Number,

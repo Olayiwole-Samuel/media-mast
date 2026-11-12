@@ -149,6 +149,12 @@ const AuditLogSchema = new mongoose.Schema(
                 // ─────────────────────────────
                 // Admin Actions
                 // ─────────────────────────────
+                // Account verification (CAC / TIN / rate card)
+                'SUBMIT_VERIFICATION',
+                'APPROVE_VERIFICATION',
+                'REJECT_VERIFICATION',
+                'REQUEST_ENTERPRISE',
+
                 'ADMIN_LOGIN',
                 'ADMIN_LOGOUT',
 
@@ -179,6 +185,7 @@ const AuditLogSchema = new mongoose.Schema(
                 'SYSTEM',
                 'SUBSCRIPTION',
                 'DOCUMENT',
+                'VERIFICATION',
             ],
         },
 

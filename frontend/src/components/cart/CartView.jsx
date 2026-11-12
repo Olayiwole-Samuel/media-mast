@@ -12,7 +12,24 @@ import { discountPercentFor, useCheckoutDiscount } from "@/lib/discounts";
 // The booking cart: spots from any number of stations, grouped by campaign.
 // One checkout pays for one campaign's spots.
 
-const slotLabel = { MORNING: "Morning", AFTERNOON: "Afternoon", PRIME_TIME: "Prime time", LATE_NIGHT: "Late night", EDITION: "Print edition" };
+const slotLabel = { MORNING: "Morning", AFTERNOON: "Afternoon", PRIME_TIME: "Prime time", LATE_NIGHT: "Late night", EDITION: "Print edition", PROGRAMME: "In programme", DISPLAY: "Display" };
+
+// VAT added at checkout (the server's VAT_PERCENT; Nigeria's rate is 7.5%).
+export const VAT_PERCENT = 7.5;
+const round2 = (n) => Math.round(n * 100) / 100;
+
+// What a cart line shows: the slot from the rate card and the advert to air.
+export const describeItem = (item) => {
+    const when = item.slot === "EDITION"
+        ? `${item.date} · print edition`
+        : item.slot === "PROGRAMME" || item.slot === "DISPLAY"
+        ? `${item.date} · ${slotLabel[item.slot].toLowerCase()}`
+        : item.rateId
+        ? `${item.date} · ${item.time}${item.duration > 1 ? ` (${Math.round(item.duration / 60 * 10) / 10}h belt)` : ""}`
+        : `${item.date} at ${item.time} · ${item.duration} min · ${slotLabel[item.slot] || item.slot}`;
+    return [when, item.rateName, item.spotSeconds ? `${item.spotSeconds}s spot` : null, item.creativeName ? `advert: ${item.creativeName}` : null]
+        .filter(Boolean).join(" · ");
+};
 
 // List-price total, and the estimated discount (multi-station tiers + plan).
 export const estimateTotal = (items, discountOptions) => {
@@ -22,6 +39,8 @@ export const estimateTotal = (items, discountOptions) => {
     const stationCount = new Set(items.map((i) => i.stationId)).size;
     const { percent } = discountPercentFor(stationCount, discountOptions);
     const discount = Math.round(amount * percent) / 100;
+    const net = round2(amount - discount);
+    const vat = round2(net * (VAT_PERCENT / 100));
     return {
         amount,
         currency: currencies[0] || "NGN",
@@ -30,7 +49,10 @@ export const estimateTotal = (items, discountOptions) => {
         stationCount,
         discountPercent: percent,
         discount,
-        net: Math.round((amount - discount) * 100) / 100,
+        net,
+        vatPercent: VAT_PERCENT,
+        vat,
+        total: round2(net + vat),
     };
 };
 
@@ -50,8 +72,7 @@ export function CartItemRow({ item, index, onRemove }) {
                         {item.stationType && <span className="text-xs font-normal text-slate-400">· {item.stationType}</span>}
                     </p>
                     <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-                        {item.slot === "EDITION" ? `${item.date} · print edition` : `${item.date} at ${item.time} · ${item.duration} min · ${slotLabel[item.slot] || item.slot}`}
-                        {item.rateName ? ` · ${item.rateName}` : ""}
+                        {describeItem(item)}
                     </p>
                 </div>
             </div>
@@ -142,7 +163,8 @@ export default function CartView() {
                                     <p className="text-sm text-slate-600 dark:text-slate-300">
                                         Estimated total:{" "}
                                         {total.discount > 0 && <span className="mr-1 text-slate-400 line-through">{formatMoney(total.amount, total.currency)}</span>}
-                                        <span className="font-semibold text-slate-900 dark:text-white">{formatMoney(total.net, total.currency)}</span>
+                                        <span className="font-semibold text-slate-900 dark:text-white">{formatMoney(total.total, total.currency)}</span>
+                                        <span className="block text-xs text-slate-400">incl. {total.vatPercent}% VAT ({formatMoney(total.vat, total.currency)})</span>
                                         {total.discount > 0 && (
                                             <span className="block text-xs font-medium text-emerald-600 dark:text-emerald-400">
                                                 {total.discountPercent}% off ({total.stationCount} stations{discountOptions.planPercent ? ` + ${discountOptions.planName} plan` : ""})

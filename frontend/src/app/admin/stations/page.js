@@ -226,18 +226,13 @@ const getCompanyName = (station) => {
     return 'Unknown company';
 };
 
+// Bookings are priced from the rate card: show its cheapest rate and size.
 const formatPrice = (station) => {
-    const amount = Number(
-        station?.pricing?.amount || 0
-    );
-
-    const currency =
-        station?.pricing?.currency || 'NGN';
-
-    const unit =
-        station?.pricing?.unit || 'WEEK';
-
-    return `${currency} ${amount.toLocaleString()} / ${unit.toLowerCase()}`;
+    const rates = (station?.rateCard || []).filter((r) => r && r.isActive !== false && Number(r.price) > 0);
+    const currency = station?.pricing?.currency || 'NGN';
+    if (!rates.length) return 'No rates yet';
+    const from = Math.min(...rates.map((r) => Number(r.price)));
+    return `From ${currency} ${from.toLocaleString()} · ${rates.length} rate${rates.length === 1 ? '' : 's'}`;
 };
 
 
@@ -889,7 +884,7 @@ export default function AdminStationsPage() {
 
                     <div>
                         <h1 className="text-2xl font-bold tracking-tight text-white">
-                            Stations
+                            Media houses
                         </h1>
 
                         <p className="mt-1 text-sm text-slate-400">
@@ -1520,7 +1515,7 @@ export default function AdminStationsPage() {
                                         {/* PRICE */}
                                         <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2.5">
                                             <p className="text-xs text-slate-500">
-                                                Starting price
+                                                Rate card
                                             </p>
 
                                             <p className="mt-0.5 text-sm font-semibold text-white">
@@ -2497,7 +2492,7 @@ export default function AdminStationsPage() {
                                         </h3>
 
                                         <p className="mt-1 text-xs text-slate-500">
-                                            Set the current advertising price for this station.
+                                            A starting price only. Bookings are priced from the station&apos;s rate card (belts and spot lengths), which its manager enters on the station desk under Rates & profile.
                                         </p>
                                     </div>
 

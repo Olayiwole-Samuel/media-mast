@@ -11,6 +11,14 @@ mongoose.set('bufferCommands', false);
 
 const src = (p) => require(path.join(BACKEND, 'src', p));
 const User = src('models/User'), Employee = src('models/Employee'), Company = src('models/Company');
+// Verification records (self-registered businesses): none in this harness; approvals also settle them.
+const Verification = src('models/Verification');
+Verification.updateMany = async () => ({ matchedCount: 0, modifiedCount: 0 });
+Verification.find = () => ({ select: async () => [] }); // no open verification alerts to clear
+Verification.aggregate = async () => []; // dashboard: no approvals waiting
+src('models/Creative').countDocuments = async () => 0;
+// Approving a station also activates its self-registered managers; no such accounts here.
+User.updateMany = async () => ({ matchedCount: 0, modifiedCount: 0 });
 const Campaign = src('models/Campaign'), Booking = src('models/Booking'), Station = src('models/Station');
 const Payment = src('models/Payment'), AuditLog = src('models/AuditLog');
 

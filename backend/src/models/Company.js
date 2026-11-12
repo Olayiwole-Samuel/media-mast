@@ -52,6 +52,13 @@ const CompanySchema = new mongoose.Schema({
         type: String,
         default: 'Nigeria',
     },
+    // What kind of business this is: a brand advertising itself (CLIENT) or
+    // an ad agency booking on behalf of client brands (AGENCY).
+    companyType: {
+        type: String,
+        enum: ['CLIENT', 'AGENCY'],
+        default: 'CLIENT',
+    },
     status: {
         type: String,
         enum: ['PENDING', 'APPROVED', 'SUSPENDED', 'REJECTED'],

@@ -4,6 +4,7 @@ const Booking = require('../models/Booking');
 const Campaign = require('../models/Campaign');
 const Station = require('../models/Station');
 const Payment = require('../models/Payment');
+const Creative = require('../models/Creative');
 const AuditLog = require('../models/AuditLog');
 const { bookingHelpers } = require('./booking.controller');
 const { advertiserScope, advertiserOwner } = require('../utils/advertiser');
@@ -12,6 +13,7 @@ const {
     getPaymentProvider,
     generatePaymentReference,
     getPlatformFeePercent,
+    getVatPercent,
 } = require('../utils/payments');
 const {
     acquireStationBookingLock,
@@ -37,7 +39,8 @@ const {
     validateBookingFields,
     checkCampaignForBooking,
     checkStationForBooking,
-    takesExclusiveTime,
+    itemTakesExclusiveTime,
+    rateBookingFields,
     getBookingRange,
     findConflictingBooking,
     generateBookingReference,
@@ -45,6 +48,10 @@ const {
 } = bookingHelpers;
 
 const round2 = (n) => Math.round(n * 100) / 100;
+
+// Every booked spot names the advert (with its ARCON certificate) to air.
+// REQUIRE_CREATIVE=false relaxes this (older test harnesses only).
+const isCreativeRequired = () => String(process.env.REQUIRE_CREATIVE ?? 'true').trim().toLowerCase() !== 'false';
 
 // Raised inside the checkout transaction (aborts it).
 class CheckoutConflict extends Error {
@@ -75,6 +82,8 @@ const publicPayment = (payment) => ({
     platformFee: payment.platformFee,
     discount: payment.discount || 0,
     discountPercent: payment.discountPercent || 0,
+    vat: payment.vat || 0,
+    vatPercent: payment.vatPercent || 0,
     currency: payment.currency,
     status: payment.status,
     provider: payment.provider,
@@ -161,22 +170,56 @@ const checkout = async (req, res) => {
             }
         }
 
+        const stationIds = [...new Set(items.map((p) => String(p.stationId)))].sort();
+        const stations = await Station.find({ _id: { $in: stationIds } });
+        const stationById = new Map(stations.map((s) => [String(s._id), s]));
+
+        // ── The advert for each spot: uploaded to this campaign, approved, ARCON-cleared ──
+        const creativeIds = [...new Set(items.map((i) => i.creativeId).filter(Boolean))];
+        const creatives = creativeIds.length
+            ? await Creative.find({ _id: { $in: creativeIds }, campaignId: campaign._id })
+            : [];
+        const creativeById = new Map(creatives.map((c) => [String(c._id), c]));
+
         // ── Per-item booking rules (same as createBooking) ──
         const prepared = [];
 
         for (const [index, item] of items.entries()) {
-            const fields = validateBookingFields({ ...item, campaignId });
+            const station = stationById.get(String(item.stationId));
+            const rate = station && item.rateId
+                ? (station.rateCard || []).find((r) => r && r.isActive !== false && String(r._id) === String(item.rateId))
+                : null;
+            // A rate sets the time window and spot length; the client cannot change them.
+            const fromRate = rate ? rateBookingFields(station, rate) : null;
+            if (!fromRate && (!item.time || !item.duration)) {
+                return itemError(index, rate || !item.rateId ? 'Choose a start time and length' : "That rate is not on this station's rate card");
+            }
+
+            const fields = validateBookingFields({ ...item, ...(fromRate || {}), campaignId });
             if (fields.error) return itemError(index, fields.error);
 
             const campaignProblem = checkCampaignForBooking(campaign, fields.value.dateOnly);
             if (campaignProblem) return itemError(index, campaignProblem);
 
-            prepared.push({ ...fields.value, rateId: item.rateId || null });
-        }
+            let creative = null;
+            if (item.creativeId) {
+                creative = creativeById.get(String(item.creativeId));
+                if (!creative) return itemError(index, 'That advert is not part of this campaign');
+                if (creative.status !== 'APPROVED') return itemError(index, `"${creative.name}" is still waiting for approval in your team`);
+                if (!creative.fileId || !creative.arcon?.fileId) {
+                    return itemError(index, `"${creative.name}" needs its advert file and ARCON certificate uploaded`);
+                }
+            } else if (isCreativeRequired()) {
+                return itemError(index, 'Choose the advert to air (upload it with its ARCON certificate first)');
+            }
 
-        const stationIds = [...new Set(prepared.map((p) => String(p.stationId)))].sort();
-        const stations = await Station.find({ _id: { $in: stationIds } });
-        const stationById = new Map(stations.map((s) => [String(s._id), s]));
+            prepared.push({
+                ...fields.value,
+                rateId: item.rateId || null,
+                creativeId: creative ? creative._id : null,
+                spotSeconds: fromRate ? fromRate.spotSeconds : null,
+            });
+        }
 
         for (const [index, item] of prepared.entries()) {
             const station = stationById.get(String(item.stationId));
@@ -215,7 +258,7 @@ const checkout = async (req, res) => {
             for (let b = a + 1; b < prepared.length; b++) {
                 const x = prepared[a], y = prepared[b];
                 if (
-                    takesExclusiveTime(x.station) &&
+                    itemTakesExclusiveTime(x.station, x.rate) &&
                     String(x.stationId) === String(y.stationId) &&
                     x.dateOnly === y.dateOnly &&
                     x.start < y.end && x.end > y.start
@@ -230,8 +273,10 @@ const checkout = async (req, res) => {
         // Discount: several stations in one checkout, plus the plan's own.
         const discount = discountFor({ subtotal, stationCount: stationIds.length, planPercent });
         const net = round2(subtotal - discount.amount);
+        const vatPercent = getVatPercent();
+        const vat = round2(net * (vatPercent / 100));
         const platformFee = round2(net * (getPlatformFeePercent() / 100));
-        const amount = round2(net + platformFee);
+        const amount = round2(net + vat + platformFee);
 
         // ── Lock every station (sorted, so concurrent checkouts can't deadlock) ──
         for (const stationId of stationIds) {
@@ -242,7 +287,7 @@ const checkout = async (req, res) => {
 
         if (!lockedOut) {
             for (const [index, item] of prepared.entries()) {
-                if (!takesExclusiveTime(item.station)) continue;
+                if (!itemTakesExclusiveTime(item.station, item.rate)) continue;
                 const existing = await findConflictingBooking({
                     stationId: item.station._id,
                     bookingDate: item.bookingDate,
@@ -281,6 +326,8 @@ const checkout = async (req, res) => {
                     platformFee,
                     discount: discount.amount,
                     discountPercent: discount.percent,
+                    vat,
+                    vatPercent,
                     currency,
                     reference,
                     status: 'SUCCESSFUL',
@@ -305,6 +352,8 @@ const checkout = async (req, res) => {
                     currency: item.currency,
                     rateId: item.rate ? item.rate._id : null,
                     rateName: item.rate ? item.rate.name : null,
+                    spotSeconds: item.spotSeconds,
+                    creativeId: item.creativeId,
                     status: 'PENDING',
                     paymentId: payment._id,
                     paymentStatus: 'PAID',
@@ -314,7 +363,7 @@ const checkout = async (req, res) => {
                 // inside the transaction, which also sees our own inserts.
                 const ownIds = bookings.map((b) => b._id);
                 for (const [index, item] of prepared.entries()) {
-                    if (!takesExclusiveTime(item.station)) continue;
+                    if (!itemTakesExclusiveTime(item.station, item.rate)) continue;
                     const clash = await findConflictingBooking({
                         stationId: item.station._id,
                         bookingDate: item.bookingDate,
@@ -509,11 +558,12 @@ const getAdminPayments = async (req, res) => {
         // money taken (SUCCESSFUL, plus REFUNDED ones before their refund).
         const totals = {};
         for (const p of payments) {
-            const t = totals[p.currency] || (totals[p.currency] = { collected: 0, refunded: 0, platformFees: 0, net: 0, count: 0 });
+            const t = totals[p.currency] || (totals[p.currency] = { collected: 0, refunded: 0, platformFees: 0, vat: 0, net: 0, count: 0 });
             t.count += 1;
             if (p.status === 'SUCCESSFUL' || p.status === 'REFUNDED') {
                 t.collected = round2(t.collected + (Number(p.amount) || 0));
                 t.platformFees = round2(t.platformFees + (Number(p.platformFee) || 0));
+                t.vat = round2(t.vat + (Number(p.vat) || 0));
             }
             t.refunded = round2(t.refunded + (Number(p.refundAmount) || 0));
             t.net = round2(t.collected - t.refunded);

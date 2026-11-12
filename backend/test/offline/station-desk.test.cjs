@@ -6,6 +6,8 @@
 process.env.JWT_SECRET = 'station-desk-harness-dummy-secret';
 process.env.JWT_EXPIRE = '5m';
 process.env.SUBSCRIPTION_REQUIRED = 'false'; // subscription gating is covered by subscriptions.test.cjs
+process.env.REQUIRE_CREATIVE = 'false'; // advert + ARCON requirement is covered by verification-creatives.test.cjs
+process.env.VAT_PERCENT = '0'; // VAT is covered by verification-creatives.test.cjs; amounts here are pre-VAT
 process.env.ALLOW_DIRECT_BOOKING = 'true'; // these checks exercise the direct (unpaid) booking route
 delete process.env.VERCEL;
 delete process.env.PLATFORM_FEE_PERCENT;

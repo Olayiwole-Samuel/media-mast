@@ -24,11 +24,13 @@ const passwordRule = () => Joi.string()
 
 // ── Register Validation Schema ──
 const registerSchema = Joi.object({
+    // media client / media agency / media house ("individual" and "company"
+    // are the older names, still accepted).
     accountType: Joi.string()
-        .valid('individual', 'company')
+        .valid('client', 'agency', 'media_house', 'individual', 'company')
         .required()
         .messages({
-            'any.only': 'Account type must be either "individual" or "company"',
+            'any.only': 'Choose media client, media agency or media house',
             'any.required': 'Account type is required',
         }),
     email: Joi.string()
@@ -43,7 +45,7 @@ const registerSchema = Joi.object({
     password: passwordRule(),
     name: Joi.string()
         .when('accountType', {
-            is: Joi.string().valid('individual', 'company'),
+            is: Joi.string().valid('individual', 'company', 'client', 'agency', 'media_house'),
             then: Joi.string().required().trim().min(1).max(100),
             otherwise: Joi.string().optional().allow(''),
         })
@@ -53,7 +55,7 @@ const registerSchema = Joi.object({
         }),
     companyName: Joi.string()
         .when('accountType', {
-            is: 'company',
+            is: Joi.string().valid('company', 'client', 'agency', 'media_house'),
             then: Joi.string().required().trim().min(1).max(100),
             otherwise: Joi.string().optional().allow(''),
         })
@@ -68,6 +70,20 @@ const registerSchema = Joi.object({
         .messages({
             'string.pattern.base': 'Please enter a valid phone number',
         }),
+    // Media house only: what it runs and where.
+    mediaType: Joi.string()
+        .uppercase()
+        .when('accountType', {
+            is: 'media_house',
+            then: Joi.string().valid('TV', 'RADIO', 'PRESS', 'BILLBOARD', 'DIGITAL').required(),
+            otherwise: Joi.forbidden(),
+        })
+        .messages({
+            'any.required': 'Choose what your media house runs (TV, radio, press, billboard or digital)',
+            'any.only': 'Choose TV, radio, press, billboard or digital',
+        }),
+    state: Joi.string().trim().max(60).allow('').optional(),
+    city: Joi.string().trim().max(60).allow('').optional(),
 });
 
 // ── Login Validation Schema ──

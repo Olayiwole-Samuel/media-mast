@@ -1,7 +1,12 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-const protect = async (req, res, next) => {
+// A business that has signed up but is not yet approved (status PENDING)
+// may use only the routes that take protectAllowPending: its profile,
+// sign-out and its verification page. Every other route uses protect.
+const PENDING_ALLOWED_TYPES = ['COMPANY', 'STATION'];
+
+const authenticate = ({ allowPending = false } = {}) => async (req, res, next) => {
     try {
         let token;
 
@@ -59,11 +64,19 @@ const protect = async (req, res, next) => {
         // ─────────────────────────────────────────────
         // Check account status
         // ─────────────────────────────────────────────
-        if (user.status !== 'ACTIVE') {
+        const pendingAndAllowed = allowPending
+            && user.status === 'PENDING'
+            && PENDING_ALLOWED_TYPES.includes(user.accountType);
+
+        if (user.status !== 'ACTIVE' && !pendingAndAllowed) {
             let message = 'Account is not active.';
 
             if (user.status === 'PENDING') {
-                message = 'Your account is awaiting approval.';
+                return res.status(403).json({
+                    success: false,
+                    code: 'VERIFICATION_REQUIRED',
+                    message: 'Your account is awaiting verification. Finish and submit your verification details to continue.',
+                });
             }
 
             if (user.status === 'SUSPENDED') {
@@ -133,6 +146,10 @@ const protect = async (req, res, next) => {
     }
 };
 
+const protect = authenticate();
+const protectAllowPending = authenticate({ allowPending: true });
+
 module.exports = {
     protect,
+    protectAllowPending,
 };

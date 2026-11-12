@@ -21,6 +21,8 @@ const {
     ACTIVE_CAMPAIGN_STATUSES,
 } = require('../utils/subscriptions');
 const documentStorage = require('../utils/documentStorage');
+const { pushInApp, resolveNotifications } = require('../utils/notifications');
+const { appUrl, renderEmail, sendEmail } = require('../utils/mailer');
 const { sendValidationErrors, joiFieldErrors, fieldError } = require('../utils/validationResponse');
 
 const audit = async (req, action, entityId, metadata) => {
@@ -291,6 +293,12 @@ const assignSubscription = async (req, res) => {
             await Subscription.updateOne({ _id: current._id, status: 'ACTIVE' }, { $set: { status: 'REPLACED', cancelledAt: now } });
         }
         await audit(req, 'CREATE_SUBSCRIPTION', created._id, { plan: plan.code, assigned: true, email: value.email, price: value.price });
+        // Setting up the plan answers any Enterprise request from this account.
+        await resolveNotifications(`enterprise:${user._id}`);
+        await AuditLog.updateMany(
+            { action: 'REQUEST_ENTERPRISE', userId: user._id, 'metadata.handledAt': { $exists: false } },
+            { $set: { 'metadata.handledAt': new Date(), 'metadata.handledPlan': plan.code } }
+        );
 
         return res.status(201).json({ success: true, message: `${plan.name} assigned to ${value.email}.`, data: publicSubscription(created) });
     } catch (err) {
@@ -339,7 +347,86 @@ const updatePlan = async (req, res) => {
     }
 };
 
+// ── POST /subscriptions/enterprise-request ──
+// Enterprise is the one plan offered in the dashboard: a custom deal set up
+// by the Media Masters team (the admin then assigns it under Subscriptions).
+const enterpriseSchema = Joi.object({
+    message: Joi.string().trim().min(10).max(1000).required().messages({
+        'any.required': 'Tell us what you need (at least 10 characters)',
+        'string.empty': 'Tell us what you need (at least 10 characters)',
+        'string.min': 'Tell us what you need (at least 10 characters)',
+    }),
+    phone: Joi.string().trim().pattern(/^[0-9+\-\s()]{10,15}$/).allow('').default('')
+        .messages({ 'string.pattern.base': 'Enter a valid phone number' }),
+}).unknown(false);
+
+const requestEnterprise = async (req, res) => {
+    const { error, value } = enterpriseSchema.validate(req.body || {}, { abortEarly: false, convert: true });
+    if (error) return sendValidationErrors(res, joiFieldErrors(error));
+    try {
+        const company = req.user.companyId ? await Company.findById(req.user.companyId).select('name') : null;
+        const who = company?.name || req.user.name;
+        // Kept in full so the admin can follow it up from Subscriptions.
+        await audit(req, 'REQUEST_ENTERPRISE', req.user._id, {
+            message: value.message,
+            phone: value.phone || null,
+            name: req.user.name,
+            email: req.user.email,
+            business: who,
+        });
+        const admins = await User.find({ accountType: 'ADMIN', status: 'ACTIVE' }).select('_id email');
+        await pushInApp(admins, {
+            type: 'SUBSCRIPTION',
+            title: `Enterprise request from ${who}`,
+            body: `${value.message}${value.phone ? ` · Call ${value.phone}` : ''} · ${req.user.email}`,
+            link: '/admin/subscriptions',
+            ref: `enterprise:${req.user._id}`,
+        });
+        const emails = admins.map((a) => a.email).filter(Boolean);
+        if (emails.length) {
+            const { text, html } = renderEmail({
+                heading: `Enterprise request from ${who}`,
+                paragraphs: [value.message, `Contact: ${req.user.name} · ${req.user.email}${value.phone ? ` · ${value.phone}` : ''}`],
+                action: { label: 'Open Subscriptions', url: appUrl('/admin/subscriptions') },
+            });
+            await sendEmail({ to: emails, subject: `Enterprise request: ${who}`, text, html }).catch(() => {});
+        }
+        return res.status(201).json({ success: true, message: 'Thanks — our team will contact you to set up your Enterprise plan.' });
+    } catch (err) {
+        console.error('❌ Enterprise request error:', err.name, err.message);
+        return res.status(500).json({ success: false, message: 'Could not send your request' });
+    }
+};
+
+// ── GET /admin/enterprise-requests ── who asked for Enterprise, newest first.
+const getEnterpriseRequests = async (req, res) => {
+    try {
+        const rows = await AuditLog.find({ action: 'REQUEST_ENTERPRISE' })
+            .sort({ createdAt: -1 })
+            .limit(100)
+            .lean();
+        return res.json({
+            success: true,
+            data: rows.map((r) => ({
+                _id: r._id,
+                at: r.createdAt,
+                business: r.metadata?.business || null,
+                name: r.metadata?.name || null,
+                email: r.metadata?.email || null,
+                phone: r.metadata?.phone || null,
+                message: r.metadata?.message || null,
+                handledAt: r.metadata?.handledAt || null,
+            })),
+        });
+    } catch (error) {
+        console.error('❌ Enterprise requests error:', error.name, error.message);
+        return res.status(500).json({ success: false, message: 'Failed to load Enterprise requests' });
+    }
+};
+
 module.exports = {
+    getEnterpriseRequests,
+    requestEnterprise,
     getPlans,
     getMySubscription,
     subscribe,

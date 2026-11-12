@@ -76,6 +76,19 @@ const BookingSchema = new mongoose.Schema(
             default: null,
         },
 
+        // Spot length bought (seconds, from the rate card: 60/45/30/15).
+        spotSeconds: {
+            type: Number,
+            default: null,
+        },
+
+        // The advert (with its ARCON certificate) the station should air.
+        creativeId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Creative',
+            default: null,
+        },
+
         currency: {
             type: String,
             default: 'NGN',

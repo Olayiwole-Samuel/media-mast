@@ -1,6 +1,6 @@
 const AuditLog = require('../models/AuditLog');
 const documentStorage = require('../utils/documentStorage');
-const { getAccess, subscriptionOwner } = require('../utils/subscriptions');
+const { getAccess, subscriptionOwner, isSubscriptionRequired } = require('../utils/subscriptions');
 
 // ─────────────────────────────────────────────────────────────
 // CLIENT DOCUMENTS (advertiser's cloud space)
@@ -26,7 +26,15 @@ const audit = async (req, action, entityId, metadata) => {
     }
 };
 
-const quotaFor = (plan) => Math.max(0, Number(plan?.storageMB) || 0) * MB;
+// Every approved account gets free space (FREE_STORAGE_MB, default 1 GB);
+// an Enterprise plan can raise it. With SUBSCRIPTION_REQUIRED=true the old
+// rule applies: storage comes only with a plan.
+const freeStorageMB = () => {
+    if (isSubscriptionRequired()) return 0;
+    const raw = Number(process.env.FREE_STORAGE_MB);
+    return Number.isFinite(raw) && raw >= 0 ? raw : 1024;
+};
+const quotaFor = (plan) => Math.max(Number(plan?.storageMB) || 0, freeStorageMB()) * MB;
 
 const listMyDocuments = async (req, res) => {
     try {

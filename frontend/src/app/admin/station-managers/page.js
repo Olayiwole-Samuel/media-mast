@@ -117,7 +117,7 @@ export default function StationManagersPage() {
                 <div>
                     <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900 dark:text-white">
                         <UserCog className="h-6 w-6 text-emerald-500" />
-                        Station managers
+                        Media house managers
                     </h1>
                     <p className="mt-1 text-slate-500 dark:text-slate-400">People who run the station desk for their assigned stations: booking requests, rates and calendar.</p>
                 </div>

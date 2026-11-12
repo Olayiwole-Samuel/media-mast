@@ -37,6 +37,7 @@ import {
     deactivateAdminStation,
     updateAdminStationInventoryStatus,
 } from '@/lib/api';
+import StationRateCardTable from '@/components/admin/StationRateCardTable';
 
 
 // ─────────────────────────────────────────────
@@ -123,24 +124,6 @@ const formatDateTime = (date) => {
         hour: 'numeric',
         minute: '2-digit',
     });
-};
-
-const formatPrice = (pricing) => {
-    if (
-        !pricing ||
-        pricing.amount === undefined ||
-        pricing.amount === null
-    ) {
-        return '—';
-    }
-
-    const amount = Number(pricing.amount);
-
-    if (Number.isNaN(amount)) {
-        return '—';
-    }
-
-    return `${pricing.currency || 'NGN'} ${amount.toLocaleString('en-NG')}`;
 };
 
 const getCompanyName = (company) => {
@@ -464,7 +447,6 @@ export default function AdminStationDetailsPage() {
 
     const location = station.location || {};
     const coordinates = location.coordinates || {};
-    const pricing = station.pricing || {};
 
     const approvalStatus = station.approvalStatus || 'PENDING';
     const inventoryStatus = station.inventoryStatus || 'AVAILABLE';
@@ -1043,24 +1025,43 @@ export default function AdminStationDetailsPage() {
                     <div className="space-y-6">
 
                         <Section
-                            title="Pricing"
+                            title="Rate card"
                             icon={Megaphone}
                         >
-                            <InfoRow
-                                label="Price"
-                                value={formatPrice(pricing)}
-                            />
-
-                            <InfoRow
-                                label="Billing Unit"
-                                value={formatStatus(pricing.unit)}
-                            />
-
-                            <InfoRow
-                                label="Currency"
-                                value={pricing.currency}
-                            />
+                            <div className="py-4">
+                                <StationRateCardTable station={station} />
+                                <p className="mt-2 text-xs text-slate-500">
+                                    Bookings are priced from these rates (plus VAT). The station edits them on its desk under Rates &amp; profile.
+                                </p>
+                            </div>
                         </Section>
+
+                        <Section
+                            title="Managers"
+                            icon={Building2}
+                        >
+                            {(station.managers || []).length === 0 ? (
+                                <InfoRow label="Logins" value="No manager yet. Add one under Media house managers." />
+                            ) : (
+                                station.managers.map((m) => (
+                                    <InfoRow key={m._id} label={m.status === 'ACTIVE' ? 'Manager' : `Manager (${String(m.status).toLowerCase()})`} value={`${m.name} · ${m.email}`} />
+                                ))
+                            )}
+                        </Section>
+
+                        {station.verification && (
+                            <Section
+                                title="Verification"
+                                icon={CheckCircle2}
+                            >
+                                <InfoRow label="Status" value={formatStatus(station.verification.status)} />
+                                <InfoRow label="Registered name" value={station.verification.businessName} />
+                                <InfoRow label="CAC registration number" value={station.verification.registrationNumber} />
+                                <InfoRow label="TIN" value={station.verification.taxId} />
+                                <InfoRow label="Documents" value={(station.verification.documents || []).map((d) => d.name).join(', ') || 'None'} />
+                                {station.verification.reviewNote && <InfoRow label="Last note sent" value={station.verification.reviewNote} />}
+                            </Section>
+                        )}
 
 
                         <Section

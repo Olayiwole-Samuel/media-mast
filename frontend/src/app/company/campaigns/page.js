@@ -12,6 +12,7 @@ import {
     updateCampaignStatus,
     getCampaignCancellationQuote,
     cancelCampaign,
+    getMe,
 } from "@/lib/api";
 import {
     campaignStatus,
@@ -43,7 +44,7 @@ const OBJECTIVES = [
 const objectiveLabel = (value) =>
     OBJECTIVES.find((o) => o.value === value)?.label || campaignStatus(value).label;
 
-const EMPTY_FORM = { name: "", description: "", objective: "BRAND_AWARENESS", budget: "", startDate: "", endDate: "" };
+const EMPTY_FORM = { name: "", description: "", objective: "BRAND_AWARENESS", budget: "", startDate: "", endDate: "", clientBrand: "" };
 
 const toDateInput = (value) => (value ? new Date(value).toISOString().slice(0, 10) : "");
 
@@ -85,6 +86,13 @@ export default function CompanyCampaignsPage() {
     const [formOpen, setFormOpen] = useState(false);
     const [editing, setEditing] = useState(null);
     const [form, setForm] = useState(EMPTY_FORM);
+    // Agencies book for client brands: their campaigns say which brand.
+    const [isAgency, setIsAgency] = useState(false);
+    useEffect(() => {
+        let live = true;
+        getMe().then((me) => { if (live) setIsAgency(me?.data?.companyId?.companyType === "AGENCY"); }).catch(() => {});
+        return () => { live = false; };
+    }, []);
     const [formError, setFormError] = useState("");
     const [saving, setSaving] = useState(false);
 
@@ -131,6 +139,7 @@ export default function CompanyCampaignsPage() {
             budget: campaign.budget ?? "",
             startDate: toDateInput(campaign.startDate),
             endDate: toDateInput(campaign.endDate),
+            clientBrand: campaign.clientBrand || "",
         });
         setFormError("");
         setOpenMenu(null);
@@ -156,6 +165,7 @@ export default function CompanyCampaignsPage() {
             budget: Number(form.budget),
             startDate: form.startDate || null,
             endDate: form.endDate || null,
+            ...(isAgency ? { clientBrand: form.clientBrand.trim() || null } : {}),
         };
 
         setSaving(true);
@@ -428,6 +438,13 @@ export default function CompanyCampaignsPage() {
                         <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Christmas radio campaign" maxLength={100} required className={inputClass} />
                     </label>
 
+                    {isAgency && (
+                        <label className="block">
+                            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Client brand</span>
+                            <input type="text" value={form.clientBrand} onChange={(e) => setForm({ ...form, clientBrand: e.target.value })} placeholder="The brand you are booking for, e.g. Sunrise Foods" maxLength={120} className={inputClass} />
+                        </label>
+                    )}
+
                     <label className="block">
                         <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">What is it for?</span>
                         <select value={form.objective} onChange={(e) => setForm({ ...form, objective: e.target.value })} className={inputClass}>
@@ -492,6 +509,7 @@ export default function CompanyCampaignsPage() {
                         <div className="space-y-6 p-6">
                             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                                 {[
+                                    ...(viewing.clientBrand ? [["Client brand", viewing.clientBrand]] : []),
                                     ["Purpose", objectiveLabel(viewing.objective)],
                                     ["Budget", formatMoney(viewing.budget, viewing.currency)],
                                     ["Start", formatDate(viewing.startDate)],
@@ -549,7 +567,7 @@ export default function CompanyCampaignsPage() {
                                     </section>
 
                                     <section>
-                                        <h3 className="mb-3 text-xs uppercase tracking-wider text-slate-400">Creatives</h3>
+                                        <h3 className="mb-3 text-xs uppercase tracking-wider text-slate-400">Adverts (with ARCON certificate)</h3>
                                         <CampaignCreatives campaignId={viewing._id} />
                                     </section>
                                 </>

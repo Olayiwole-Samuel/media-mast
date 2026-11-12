@@ -163,7 +163,8 @@ const validateBlackout = (body, todayDateOnly) => {
 // ── Rate card (PUT /station-portal/stations/:id/rate-card) ──
 // TIME_BELT (TV/radio): a belt with start/end time, e.g. AAA 19:00–22:00.
 // PLACEMENT (press, billboard, digital): a size/position, e.g. full page colour.
-const MAX_RATES = 40;
+// A full broadcast card (belts × programmes × 60/45/30/15s) runs past 100 rows.
+const MAX_RATES = 150;
 const rateSchema = Joi.object({
     _id: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).messages({ 'string.pattern.base': 'Invalid rate id' }),
     name: Joi.string().trim().min(1).max(80).pattern(/^[^\u0000-\u001F\u007F]*$/, 'no control characters').required().messages({ 'any.required': 'Each rate needs a name', 'string.empty': 'Each rate needs a name' }),
@@ -195,9 +196,14 @@ const validateRateCard = (body) => {
     if (error) {
         return { errors: error.details.map((d) => ({ field: d.path.join('.') || null, message: String(d.message).replace(/"/g, '') })) };
     }
-    const names = value.rates.map((r) => r.name.toLowerCase());
-    const dup = names.find((n, i) => names.indexOf(n) !== i);
-    if (dup) return { errors: [{ field: 'rates', message: 'Each rate needs its own name' }] };
+    // One belt or programme can be sold in several spot lengths (60/45/30/15s)
+    // or, for press, sizes and colours; the same combination may not repeat.
+    const keys = value.rates.map((r) => [r.name.toLowerCase(), r.spotSeconds || '', (r.size || '').toLowerCase(), r.colour || ''].join('|'));
+    const dup = keys.findIndex((k, i) => keys.indexOf(k) !== i);
+    if (dup !== -1) {
+        const r = value.rates[dup];
+        return { errors: [{ field: 'rates', message: `"${r.name}"${r.spotSeconds ? ` (${r.spotSeconds}s)` : ''} is listed twice` }] };
+    }
     return {
         value: {
             rates: value.rates.map((r) => ({

@@ -63,6 +63,16 @@ const authFetch = async (endpoint, options = {}) => {
             }
         }
 
+        // An account still awaiting approval can only use its verification page.
+        if (
+            response.status === 403 &&
+            data?.code === 'VERIFICATION_REQUIRED' &&
+            typeof window !== 'undefined' &&
+            !window.location.pathname.startsWith('/verify')
+        ) {
+            window.location.assign('/verify');
+        }
+
         const message =
             data?.message ||
             (Array.isArray(data?.errors) ? data.errors[0] : null) ||
@@ -611,13 +621,13 @@ export const checkout = async ({ campaignId, items }) => {
         method: 'POST',
         body: JSON.stringify({
             campaignId,
-            items: (items || []).map(({ stationId, slot, date, time, duration, rateId }) => ({
+            // With a rate, the server takes the time window and spot length from it.
+            items: (items || []).map(({ stationId, slot, date, time, duration, rateId, creativeId }) => ({
                 stationId,
                 slot,
                 date,
-                time,
-                duration: Number(duration),
-                ...(rateId ? { rateId } : {}),
+                ...(rateId ? { rateId } : { time, duration: Number(duration) }),
+                ...(creativeId ? { creativeId } : {}),
             })),
         }),
     });
@@ -735,6 +745,118 @@ export const downloadDocument = async (id, name) => {
 };
 
 export const deleteDocument = async (id) => authFetch(`/api/v1/documents/${id}`, { method: 'DELETE' });
+
+// ── LARGE FILE UPLOADS (adverts, ARCON certificates, verification documents) ──
+// Files go up in parts (the server's part size, ~3.5 MB) so videos of up to
+// 100 MB fit under the hosting request limit. onProgress gets 0–1.
+// Returns { uploadId, fileId, name, size, contentType } once the file is complete.
+export const uploadFileInParts = async (file, purpose, onProgress) => {
+    const started = await authFetch('/api/v1/uploads', {
+        method: 'POST',
+        body: JSON.stringify({ purpose, name: file.name, contentType: file.type || 'application/octet-stream', size: file.size }),
+    });
+    const { uploadId, partSize, parts } = started.data;
+    const token = getToken();
+    onProgress?.(0);
+    for (let index = 0; index < parts; index++) {
+        const blob = file.slice(index * partSize, Math.min(file.size, (index + 1) * partSize));
+        let lastError = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const response = await fetch(`${API_URL}/api/v1/uploads/${uploadId}/parts/${index}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/octet-stream',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: blob,
+            }).catch((err) => ({ ok: false, status: 0, json: async () => ({ message: err.message }) }));
+            if (response.ok) { lastError = null; break; }
+            let data = null;
+            try { data = await response.json(); } catch { data = null; }
+            lastError = new ApiError(data?.message || 'Upload failed', response.status, data);
+            if (response.status && response.status < 500) break;
+        }
+        if (lastError) {
+            authFetch(`/api/v1/uploads/${uploadId}`, { method: 'DELETE' }).catch(() => {});
+            throw lastError;
+        }
+        onProgress?.((index + 1) / parts);
+    }
+    const done = await authFetch(`/api/v1/uploads/${uploadId}/complete`, { method: 'POST' });
+    return done.data;
+};
+
+// Fetches a protected file (advert, certificate, document) as a local object
+// URL, for <video>/<img>/<audio> or a download. Revoke it when done.
+export const fetchFileUrl = async (path) => {
+    const token = getToken();
+    const response = await fetch(`${API_URL}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!response.ok) {
+        let data = null;
+        try { data = await response.json(); } catch { data = null; }
+        throw new ApiError(data?.message || 'Could not load the file', response.status, data);
+    }
+    return URL.createObjectURL(await response.blob());
+};
+
+export const saveProtectedFile = async (path, name) => {
+    const url = await fetchFileUrl(path);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name || 'file';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+export const creativeFilePath = (id, which = 'media') => `/api/v1/creatives/${id}/file?which=${which}`;
+export const stationCreativeFilePath = (bookingId, which = 'media') => `/api/v1/bookings/${bookingId}/creative?which=${which}`;
+
+// Advert upload: the file and its ARCON certificate are uploaded first, then attached.
+export const createCreative = async ({ campaignId, name, description, durationSeconds, uploadId, arconCertificateNumber, arconUploadId }) =>
+    authFetch('/api/v1/creatives', {
+        method: 'POST',
+        body: JSON.stringify({
+            campaignId,
+            name,
+            ...(description ? { description } : {}),
+            ...(durationSeconds ? { durationSeconds: Number(durationSeconds) } : {}),
+            uploadId,
+            arconCertificateNumber,
+            arconUploadId,
+        }),
+    });
+
+// ── ACCOUNT VERIFICATION (the business's own) ──
+
+export const getMyVerification = async () => authFetch('/api/v1/verification');
+export const saveMyVerification = async (details) =>
+    authFetch('/api/v1/verification', { method: 'PUT', body: JSON.stringify(details) });
+export const addVerificationDocument = async (kind, uploadId) =>
+    authFetch('/api/v1/verification/documents', { method: 'POST', body: JSON.stringify({ kind, uploadId }) });
+export const removeVerificationDocument = async (docId) =>
+    authFetch(`/api/v1/verification/documents/${docId}`, { method: 'DELETE' });
+export const saveVerificationRateCard = async (rates) =>
+    authFetch('/api/v1/verification/rate-card', { method: 'PUT', body: JSON.stringify({ rates }) });
+export const submitMyVerification = async () => authFetch('/api/v1/verification/submit', { method: 'POST' });
+
+// ── ACCOUNT VERIFICATION (admin) ──
+
+export const getAdminVerifications = async (status = 'SUBMITTED') =>
+    authFetch(`/api/v1/admin/verifications?status=${encodeURIComponent(status)}`);
+export const getAdminVerification = async (id) => authFetch(`/api/v1/admin/verifications/${id}`);
+export const approveAdminVerification = async (id) =>
+    authFetch(`/api/v1/admin/verifications/${id}/approve`, { method: 'POST' });
+export const rejectAdminVerification = async (id, reason) =>
+    authFetch(`/api/v1/admin/verifications/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
+
+// ── ENTERPRISE PLAN REQUEST ──
+
+export const getAdminEnterpriseRequests = async () => authFetch('/api/v1/admin/enterprise-requests');
+export const getAdminAnalytics = async () => authFetch('/api/v1/admin/analytics');
+export const requestEnterprise = async ({ message, phone }) =>
+    authFetch('/api/v1/subscriptions/enterprise-request', { method: 'POST', body: JSON.stringify({ message, phone }) });
 
 // ── NOTIFICATIONS ──
 

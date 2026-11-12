@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
@@ -16,6 +17,9 @@ import {
     Sparkles,
     ArrowUpRight,
     Activity,
+    ShieldCheck,
+    Megaphone,
+    Film,
 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
@@ -274,49 +278,56 @@ export default function AdminDashboardPage() {
         };
     };
 
+    const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+    const waiting = stats.awaitingApproval || 0;
     const statCards = [
         {
-            label: "Total Users",
-            value: stats.totalUsers,
-            icon: Users,
-            color: "bg-blue-50 dark:bg-blue-500/10",
-            iconColor: "text-blue-500",
+            label: "Awaiting approval",
+            value: waiting,
+            icon: ShieldCheck,
+            color: waiting ? "bg-amber-50 dark:bg-amber-500/10" : "bg-emerald-50 dark:bg-emerald-500/10",
+            iconColor: waiting ? "text-amber-500" : "text-emerald-500",
+            hint: waiting
+                ? [stats.awaitingClients && plural(stats.awaitingClients, "client"), stats.awaitingAgencies && plural(stats.awaitingAgencies, "agency", "agencies"), stats.awaitingMediaHouses && plural(stats.awaitingMediaHouses, "media house")].filter(Boolean).join(" · ")
+                : "Nothing waiting",
+            href: "/admin/verifications",
         },
         {
-            label: "Companies",
-            value: stats.totalCompanies,
+            label: "Media clients",
+            value: stats.mediaClients ?? 0,
             icon: Building2,
             color: "bg-purple-50 dark:bg-purple-500/10",
             iconColor: "text-purple-500",
+            hint: "Brands advertising themselves",
+            href: "/admin/companies",
         },
         {
-            label: "Stations",
+            label: "Media agencies",
+            value: stats.mediaAgencies ?? 0,
+            icon: Megaphone,
+            color: "bg-blue-50 dark:bg-blue-500/10",
+            iconColor: "text-blue-500",
+            hint: "Agencies booking for brands",
+            href: "/admin/companies",
+        },
+        {
+            label: "Media houses",
             value: stats.totalStations,
             icon: Radio,
             color: "bg-emerald-50 dark:bg-emerald-500/10",
             iconColor: "text-emerald-500",
+            hint: `${stats.liveStations ?? 0} live${stats.pendingStations ? ` · ${stats.pendingStations} pending` : ""}`,
+            href: "/admin/stations",
         },
         {
-            label: "Total Revenue",
+            label: "Revenue",
             value: `${formatCurrency(stats.totalRevenue).symbol}${formatCurrency(stats.totalRevenue).number}`,
             icon: CreditCard,
             color: "bg-orange-50 dark:bg-orange-500/10",
             iconColor: "text-orange-500",
             featured: true,
-        },
-        {
-            label: "Pending Companies",
-            value: stats.pendingCompanies,
-            icon: Building2,
-            color: "bg-yellow-50 dark:bg-yellow-500/10",
-            iconColor: "text-yellow-500",
-        },
-        {
-            label: "Pending Stations",
-            value: stats.pendingStations,
-            icon: Radio,
-            color: "bg-red-50 dark:bg-red-500/10",
-            iconColor: "text-red-500",
+            hint: "Paid checkouts, incl. VAT",
+            href: "/admin/payments",
         },
         {
             label: "Campaigns",
@@ -324,6 +335,8 @@ export default function AdminDashboardPage() {
             icon: BarChart3,
             color: "bg-indigo-50 dark:bg-indigo-500/10",
             iconColor: "text-indigo-500",
+            hint: "All advertisers",
+            href: "/admin/campaigns",
         },
         {
             label: "Bookings",
@@ -331,6 +344,17 @@ export default function AdminDashboardPage() {
             icon: CreditCard,
             color: "bg-pink-50 dark:bg-pink-500/10",
             iconColor: "text-pink-500",
+            hint: "Spots booked on stations",
+            href: "/admin/bookings",
+        },
+        {
+            label: "Adverts",
+            value: stats.totalCreatives ?? 0,
+            icon: Film,
+            color: "bg-teal-50 dark:bg-teal-500/10",
+            iconColor: "text-teal-500",
+            hint: `${stats.arconCreatives ?? 0} with an ARCON certificate`,
+            href: "/admin/campaigns",
         },
     ];
 
@@ -377,6 +401,17 @@ export default function AdminDashboardPage() {
                     </div>
                 </motion.div>
 
+                {/* Approvals waiting: the admin's first job */}
+                {waiting > 0 && (
+                    <Link href="/admin/verifications" className="mb-4 flex flex-col gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900 transition-colors hover:bg-amber-100 sm:flex-row sm:items-center sm:justify-between dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
+                        <span className="flex items-center gap-2 text-sm font-semibold">
+                            <ShieldCheck className="h-5 w-5" />
+                            {plural(waiting, "business", "businesses")} waiting for approval
+                        </span>
+                        <span className="text-sm">Check their CAC number, TIN and documents →</span>
+                    </Link>
+                )}
+
                 {/* Stats */}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                     {statCards.map((stat, index) => {
@@ -385,6 +420,10 @@ export default function AdminDashboardPage() {
                         return (
                             <motion.div
                                 key={stat.label}
+                                role="link"
+                                tabIndex={0}
+                                onClick={() => router.push(stat.href)}
+                                onKeyDown={(e) => { if (e.key === "Enter") router.push(stat.href); }}
                                 initial={{
                                     opacity: 0,
                                     y: 12,
@@ -397,7 +436,7 @@ export default function AdminDashboardPage() {
                                     delay: index * 0.035,
                                     duration: 0.35,
                                 }}
-                                className="group relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] transition-all duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_12px_35px_rgba(15,23,42,0.07)] dark:border-slate-800/80 dark:bg-slate-900 dark:hover:border-slate-700 dark:hover:shadow-[0_12px_35px_rgba(0,0,0,0.2)]"
+                                className="group relative cursor-pointer overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] transition-all duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_12px_35px_rgba(15,23,42,0.07)] dark:border-slate-800/80 dark:bg-slate-900 dark:hover:border-slate-700 dark:hover:shadow-[0_12px_35px_rgba(0,0,0,0.2)]"
                             >
                                 <div className="flex items-start justify-between">
                                     <div className="min-w-0">
@@ -421,8 +460,8 @@ export default function AdminDashboardPage() {
                                 </div>
 
                                 <div className="mt-5 flex items-center justify-between">
-                                    <span className="text-xs text-slate-400 dark:text-slate-500">
-                                        Platform metric
+                                    <span className="truncate text-xs text-slate-400 dark:text-slate-500">
+                                        {stat.hint}
                                     </span>
 
                                     <ArrowUpRight

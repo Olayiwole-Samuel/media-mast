@@ -480,7 +480,7 @@ export default function Navbar() {
                             {isAuthenticated ? (
                                 <UserDropdown user={user} onSignOut={handleSignOut} />
                             ) : (
-                                <Link href="/login">
+                                <Link href="/register">
                                     <Button variant="primary">Get Started</Button>
                                 </Link>
                             )}
@@ -606,7 +606,7 @@ export default function Navbar() {
                                     Sign Out
                                 </button>
                             ) : (
-                                <Link href="/login" onClick={() => setMenuOpen(false)}>
+                                <Link href="/register" onClick={() => setMenuOpen(false)}>
                                     <Button variant="primary">Get Started</Button>
                                 </Link>
                             )}

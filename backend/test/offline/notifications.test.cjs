@@ -6,6 +6,8 @@
 process.env.JWT_SECRET = 'notif-harness-dummy-secret';
 process.env.JWT_EXPIRE = '5m';
 process.env.SUBSCRIPTION_REQUIRED = 'false'; // subscription gating is covered by subscriptions.test.cjs
+process.env.REQUIRE_CREATIVE = 'false'; // advert + ARCON requirement is covered by verification-creatives.test.cjs
+process.env.VAT_PERCENT = '0'; // VAT is covered by verification-creatives.test.cjs; amounts here are pre-VAT
 delete process.env.ALLOW_DIRECT_BOOKING;
 delete process.env.VERCEL;
 delete process.env.PAYMENT_PROVIDER;
@@ -19,6 +21,10 @@ mongoose.set('bufferCommands', false); // any un-faked DB call fails instead of 
 
 const src = (p) => require(path.join(BACKEND, 'src', p));
 const User = src('models/User'), Employee = src('models/Employee'), Company = src('models/Company'), AuditLog = src('models/AuditLog');
+// Verification records (self-registered businesses): none in this harness; approvals also settle them.
+const Verification = src('models/Verification');
+Verification.updateMany = async () => ({ matchedCount: 0, modifiedCount: 0 });
+Verification.find = () => ({ select: async () => [] }); // no open verification alerts to clear
 const Campaign = src('models/Campaign'), Station = src('models/Station'), Booking = src('models/Booking');
 const Payment = src('models/Payment'), Creative = src('models/Creative');
 const payments = src('utils/payments');

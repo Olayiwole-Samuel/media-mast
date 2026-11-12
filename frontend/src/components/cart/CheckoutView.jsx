@@ -135,8 +135,16 @@ export default function CheckoutView() {
                         </>
                     )}
                     <div className="flex justify-between text-slate-600 dark:text-slate-300">
-                        <span>Estimated total</span>
-                        <span className="text-base font-semibold text-slate-900 dark:text-white">{formatMoney(total.net, total.currency)}</span>
+                        <span>{total.discount > 0 ? "After discount" : `Spots (${total.stationCount} station${total.stationCount === 1 ? "" : "s"})`}</span>
+                        <span>{formatMoney(total.net, total.currency)}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-600 dark:text-slate-300">
+                        <span>VAT {total.vatPercent}%</span>
+                        <span>{formatMoney(total.vat, total.currency)}</span>
+                    </div>
+                    <div className="flex justify-between border-t border-slate-200 pt-2 text-slate-600 dark:border-slate-700 dark:text-slate-300">
+                        <span>Total to pay</span>
+                        <span className="text-base font-semibold text-slate-900 dark:text-white">{formatMoney(total.total, total.currency)}</span>
                     </div>
                     {(total.unpriced > 0 || total.mixedCurrency) && (
                         <p className="text-xs text-amber-700 dark:text-amber-300">
@@ -156,7 +164,7 @@ export default function CheckoutView() {
                 className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3.5 text-base font-semibold text-white hover:bg-emerald-600 disabled:opacity-60"
             >
                 {paying ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShieldCheck className="h-5 w-5" />}
-                {paying ? "Processing…" : `Pay ${formatMoney(total.net, total.currency)} (test mode)`}
+                {paying ? "Processing…" : `Pay ${formatMoney(total.total, total.currency)} (test mode)`}
             </button>
             <p className="mt-3 text-center text-xs text-slate-400">
                 If a station declines or you cancel before airing, that spot is refunded.

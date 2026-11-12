@@ -7,6 +7,13 @@ const CampaignSchema = new mongoose.Schema({
         trim: true,
         maxlength: [100, 'Campaign name cannot exceed 100 characters'],
     },
+    // For agencies: the client brand this campaign is for.
+    clientBrand: {
+        type: String,
+        trim: true,
+        maxlength: 120,
+        default: null,
+    },
     description: {
         type: String,
         default: null,

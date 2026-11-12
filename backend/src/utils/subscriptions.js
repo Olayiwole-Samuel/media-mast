@@ -6,8 +6,9 @@
 // stay open. Each plan sets limits: active campaigns, document storage,
 // an extra checkout discount and team seats.
 //
-// SUBSCRIPTION_REQUIRED=false switches the booking requirement off (e.g. a
-// free pilot); it is on by default.
+// Booking is open to every approved account by default (pay per spot);
+// Enterprise is an optional custom plan. SUBSCRIPTION_REQUIRED=true turns
+// the old "plan needed to book" rule back on.
 // ─────────────────────────────────────────────────────────────
 
 const Plan = require('../models/Plan');
@@ -63,7 +64,7 @@ const ACTIVE_CAMPAIGN_STATUSES = [
     'REVISION_REQUESTED', 'CREATIVE_APPROVED', 'SCHEDULED', 'LIVE',
 ];
 
-const isSubscriptionRequired = () => String(process.env.SUBSCRIPTION_REQUIRED ?? 'true').trim().toLowerCase() !== 'false';
+const isSubscriptionRequired = () => String(process.env.SUBSCRIPTION_REQUIRED ?? 'false').trim().toLowerCase() === 'true';
 
 // Creates any missing default plan (never overwrites an admin's edits).
 const ensureDefaultPlans = async () => {

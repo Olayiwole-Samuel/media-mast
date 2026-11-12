@@ -287,12 +287,13 @@ export default function AdminUsersPage() {
 
     const typeOptions = [
         { value: "all", label: "All Types" },
-        { value: "INDIVIDUAL", label: "Individual" },
-        { value: "COMPANY", label: "Company" },
-        { value: "EMPLOYEE", label: "Employee" },
+        { value: "COMPANY", label: "Client / agency owner" },
+        { value: "EMPLOYEE", label: "Team member" },
+        { value: "STATION", label: "Media house manager" },
         { value: "ADMIN", label: "Admin" },
-        { value: "STATION", label: "Station" },
+        { value: "INDIVIDUAL", label: "Individual (older account)" },
     ];
+    const typeLabel = (t) => typeOptions.find((o) => o.value === t)?.label || t;
 
     const stats = {
         total: users.length,
@@ -737,7 +738,7 @@ export default function AdminUsersPage() {
                                                         user.accountType
                                                     )}
 
-                                                    {user.accountType}
+                                                    {typeLabel(user.accountType)}
                                                 </span>
                                             </td>
 
@@ -967,7 +968,7 @@ export default function AdminUsersPage() {
                                                     selectedUser.accountType
                                                 )}
 
-                                                {selectedUser.accountType}
+                                                {typeLabel(selectedUser.accountType)}
                                             </span>
                                         </div>
                                     </div>

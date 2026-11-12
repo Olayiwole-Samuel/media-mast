@@ -4,6 +4,7 @@ const {
     getMySubscription,
     subscribe,
     cancelMySubscription,
+    requestEnterprise,
 } = require('../../controllers/subscription.controller');
 const { protect } = require('../../middleware/auth');
 const { requireAdvertiser, requireCompanyOwner } = require('../../middleware/role');
@@ -21,5 +22,6 @@ router.use(requireAdvertiser);
 router.get('/me', getMySubscription);
 router.post('/', ownerOrIndividual, subscribe);
 router.post('/me/cancel', ownerOrIndividual, cancelMySubscription);
+router.post('/enterprise-request', ownerOrIndividual, requestEnterprise);
 
 module.exports = router;

@@ -23,6 +23,8 @@ export default function RootLayout({ children }) {
         "/insights",
         "/company",
         "/admin",
+        // A business awaiting approval
+        "/verify",
         // Station desk (station managers)
         "/station",
     ];

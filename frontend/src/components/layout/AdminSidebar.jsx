@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
@@ -28,14 +28,18 @@ import {
     Inbox,
     KeyRound,
     Gem,
+    ShieldCheck,
 } from "lucide-react";
 import { signOut } from "@/lib/auth";
+import { getAdminVerifications } from "@/lib/api";
+import { DATA_CHANGED } from "@/lib/events";
 
 const NAV_ITEMS = [
     { label: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
-    { label: "Companies", href: "/admin/companies", icon: Building2 },
-    { label: "Stations", href: "/admin/stations", icon: Radio },
-    { label: "Station managers", href: "/admin/station-managers", icon: UserCog },
+    { label: "Approvals", href: "/admin/verifications", icon: ShieldCheck },
+    { label: "Clients & agencies", href: "/admin/companies", icon: Building2 },
+    { label: "Media houses", href: "/admin/stations", icon: Radio },
+    { label: "Media house managers", href: "/admin/station-managers", icon: UserCog },
     // Every station's desk (requests, schedule, calendar, rates).
     { label: "Station desk", href: "/station", icon: Inbox },
     { label: "Users", href: "/admin/users", icon: Users, hasDropdown: true },
@@ -54,7 +58,7 @@ const USER_SUB_ITEMS = [
         href: "/admin/users",
     },
     {
-        label: "Individuals",
+        label: "Individuals (older accounts)",
         href: "/admin/users/individuals",
     },
     {
@@ -74,6 +78,18 @@ export default function AdminSidebar({
 
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [hoveredItem, setHoveredItem] = useState(null);
+    // Businesses waiting for approval, shown beside "Approvals" (checked every 2 minutes).
+    const [waiting, setWaiting] = useState(0);
+    useEffect(() => {
+        let live = true;
+        const check = () => getAdminVerifications("SUBMITTED")
+            .then((r) => { if (live) setWaiting(r?.counts?.SUBMITTED || 0); })
+            .catch(() => {});
+        check();
+        const id = setInterval(check, 120000);
+        window.addEventListener(DATA_CHANGED, check);
+        return () => { live = false; clearInterval(id); window.removeEventListener(DATA_CHANGED, check); };
+    }, []);
 
     // Automatically keep Users open when inside any Users page
     const isUsersSection = pathname?.startsWith("/admin/users");
@@ -465,6 +481,12 @@ export default function AdminSidebar({
                                         {!isCollapsed && (
                                             <span className="truncate">
                                                 {item.label}
+                                            </span>
+                                        )}
+
+                                        {item.href === "/admin/verifications" && waiting > 0 && (
+                                            <span className={`${isCollapsed ? "absolute right-1.5 top-1.5" : "ml-auto"} flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-bold text-white`}>
+                                                {waiting > 99 ? "99+" : waiting}
                                             </span>
                                         )}
 
