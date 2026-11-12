@@ -213,7 +213,8 @@ const validateRateCard = (body) => {
                 code: r.code || null,
                 startTime: r.kind === 'TIME_BELT' ? r.startTime : null,
                 endTime: r.kind === 'TIME_BELT' ? r.endTime : null,
-                spotSeconds: r.kind === 'TIME_BELT' ? (r.spotSeconds ?? null) : null,
+                // Spot length applies to belts and to in-programme spots (press placements leave it empty).
+                spotSeconds: r.spotSeconds ?? null,
                 size: r.kind === 'PLACEMENT' ? (r.size || null) : null,
                 colour: r.kind === 'PLACEMENT' ? (r.colour || null) : null,
                 price: r.price,
