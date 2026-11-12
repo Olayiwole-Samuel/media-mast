@@ -29,6 +29,8 @@ const programme = (name, code, prices) =>
 
 const NTA_GROUP_A = {
     slug: 'nta-group-a',
+    // Earlier names this station may already exist under (updated, not duplicated).
+    aliases: ['nta', 'nta-lagos', 'nta-channel-5', 'nta-2-channel-5'],
     name: 'NTA (Group A: Lagos, Abuja, Port Harcourt)',
     type: 'TV',
     location: { city: 'Lagos', state: 'Lagos', country: 'Nigeria' },
@@ -46,6 +48,7 @@ const NTA_GROUP_A = {
 
 const CHANNELS = {
     slug: 'channels-television',
+    aliases: ['channels', 'channels-tv'],
     name: 'Channels Television',
     type: 'TV',
     location: { address: '44/48 Channels TV Avenue, Isheri North, off Lagos–Ibadan Expressway', city: 'Lagos', state: 'Lagos', country: 'Nigeria' },
@@ -74,6 +77,7 @@ const CHANNELS = {
 
 const TVC = {
     slug: 'tvc-communications',
+    aliases: ['tvc', 'tvc-news', 'tvc-e'],
     name: 'TVC & TVC News',
     type: 'TV',
     location: { city: 'Lagos', state: 'Lagos', country: 'Nigeria' },

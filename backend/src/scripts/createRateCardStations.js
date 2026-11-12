@@ -51,11 +51,17 @@ const run = async () => {
 
         for (const card of RATE_CARD_STATIONS) {
             const { rates } = validateRateCard({ rates: card.rateCard }).value;
-            const existing = await Station.findOne({ slug: card.slug });
+            // The same station may already exist under an earlier slug (e.g. "tvc"):
+            // update it in place rather than creating a duplicate.
+            const existing = await Station.findOne({ slug: { $in: [card.slug, ...(card.aliases || [])] } });
             if (existing) {
                 existing.rateCard = rates;
+                // These are meant to be bookable: make sure they're approved and on.
+                existing.approvalStatus = 'APPROVED';
+                existing.isActive = true;
                 await existing.save();
-                console.log(`• ${card.name}: rate card refreshed (${rates.length} rates)`);
+                card.matchedSlug = existing.slug;
+                console.log(`• ${existing.name}: rate card loaded (${rates.length} rates)`);
                 continue;
             }
             await Station.create({
@@ -77,7 +83,7 @@ const run = async () => {
             console.log(`• ${card.name}: created with ${rates.length} rates`);
         }
         if (process.argv.includes('--only')) {
-            const keep = RATE_CARD_STATIONS.map((c) => c.slug);
+            const keep = RATE_CARD_STATIONS.flatMap((c) => [c.slug, c.matchedSlug].filter(Boolean));
             const others = await Station.find({ slug: { $nin: keep }, isActive: true }).select('name');
             if (others.length) {
                 await Station.updateMany({ _id: { $in: others.map((o) => o._id) } }, { $set: { isActive: false } });
