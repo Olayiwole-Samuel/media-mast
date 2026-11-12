@@ -68,16 +68,32 @@ const fieldsFromRate = (station, rate) => {
 const groupRates = (rates) => {
     const map = new Map();
     for (const r of rates) {
-        const key = [r.name, r.kind, r.startTime || "", r.endTime || "", r.size || "", r.colour || ""].join("|");
-        if (!map.has(key)) map.set(key, { key, name: r.name, kind: r.kind, startTime: r.startTime, endTime: r.endTime, size: r.size, colour: r.colour, options: [] });
+        const key = [r.name, r.kind, r.startTime || "", r.endTime || "", r.size || "", r.colour || "", (r.days || []).join("")].join("|");
+        if (!map.has(key)) map.set(key, { key, name: r.name, kind: r.kind, startTime: r.startTime, endTime: r.endTime, size: r.size, colour: r.colour, days: r.days || [], options: [] });
         map.get(key).options.push(r);
     }
     for (const g of map.values()) g.options.sort((a, b) => (b.spotSeconds || 0) - (a.spotSeconds || 0));
     return [...map.values()];
 };
 
+// Days a rate is sold (0 = Sunday … 6 = Saturday); empty = every day.
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+export const daysLabel = (days) => {
+    const d = [...(days || [])].sort((a, b) => a - b);
+    if (!d.length || d.length === 7) return "";
+    const key = d.join(",");
+    if (key === "1,2,3,4,5") return "Mon–Fri";
+    if (key === "0,6") return "Sat & Sun";
+    return d.map((n) => DAY_NAMES[n]).join(", ");
+};
+const soldOn = (rate, date) => !rate?.days?.length || rate.days.includes(new Date(`${date}T12:00:00Z`).getUTCDay());
+
 const groupLabel = (g) => (g.kind === "TIME_BELT" && g.startTime ? `${g.name}` : g.name);
-const groupHint = (g) => (g.kind === "TIME_BELT" && g.startTime ? `${g.startTime}–${g.endTime}` : g.size ? `${g.size}${g.colour === "BLACK_WHITE" ? " · black & white" : g.colour ? " · colour" : ""}` : "Inside the programme, on the day booked");
+const groupHint = (g) => {
+    const when = g.kind === "TIME_BELT" && g.startTime ? `${g.startTime}–${g.endTime}` : g.size ? `${g.size}${g.colour === "BLACK_WHITE" ? " · black & white" : g.colour ? " · colour" : ""}` : "Inside the programme, on the day booked";
+    const days = daysLabel(g.days);
+    return days ? `${when} · ${days} only` : when;
+};
 
 const isBookable = (c) => c.status === "APPROVED" && c.fileId && c.arcon?.fileId;
 
@@ -176,7 +192,8 @@ export default function BookingRequestModal({ open, station: presetStation, camp
     const timing = rate && selectedStation ? fieldsFromRate(selectedStation, rate) : null;
     const room = Math.max(0, MAX_CART_ITEMS - cart.count);
     const dates = runDates(form.date, form.until, form.repeat, Math.max(room, 1));
-    const okDates = timing ? dates.filter((d) => !calendarProblem(availability, d, timing.time, timing.duration)) : dates;
+    // A run skips dates the station is unavailable and days the rate isn't sold.
+    const okDates = timing ? dates.filter((d) => soldOn(rate, d) && !calendarProblem(availability, d, timing.time, timing.duration)) : dates;
     const slotProblem = timing && form.repeat === "ONCE" && form.date ? calendarProblem(availability, form.date, timing.time, timing.duration) : null;
 
     const update = (field) => (e) => {
@@ -205,6 +222,7 @@ export default function BookingRequestModal({ open, station: presetStation, camp
         if (!rate) return setError(isPress ? "Choose a placement." : "Choose a belt or programme and a spot length.");
         if (!form.date) return setError(isPress ? "Choose the publication date." : "Choose the date.");
         if (form.repeat !== "ONCE" && (!form.until || form.until < form.date)) return setError("Choose the last date for the run.");
+        if (form.repeat === "ONCE" && !soldOn(rate, form.date)) return setError(`This rate is only sold on ${daysLabel(rate.days)}. Pick another date or rate.`);
         if (slotProblem) return setError(slotProblem);
         if (cart.isFull || room === 0) return setError(`Your cart already has ${MAX_CART_ITEMS} items. Check out first, then add more.`);
         if (!okDates.length) return setError("None of those dates are available at this station.");
@@ -376,6 +394,7 @@ export default function BookingRequestModal({ open, station: presetStation, camp
                                     <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-200">
                                         <span className="font-semibold">{formatMoney(rate.price, currency)}</span> per {isPress ? "insertion" : `${rate.spotSeconds ? `${rate.spotSeconds}-second ` : ""}spot`} + 7.5% VAT
                                         {rate.kind === "TIME_BELT" ? ` · airs between ${rate.startTime} and ${rate.endTime}` : ""}
+                                        {daysLabel(rate.days) ? ` · ${daysLabel(rate.days)} only` : ""}
                                         <span className="block text-xs text-emerald-700 dark:text-emerald-300">Price from the station&apos;s rate card. 3+ stations in one checkout get a discount.</span>
                                     </p>
                                 )}

@@ -416,6 +416,14 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
     check('C9  VAT 7.5% added: ₦205,000 + ₦15,375 = ₦220,375 charged (spot prices unchanged)', p && p.subtotal === 205000 && p.vatPercent === 7.5 && p.vat === 15375 && p.amount === 220375 && providerCalls.charge.at(-1).amount === 220375 && r.body.data.payment.vat === 15375, `${p?.subtotal}/${p?.vat}/${p?.amount}`);
     r = await pay(U.indiv, 'ivy', [rateItem(ros30)]);
     check('C10 Another advert in the same belt and day also books (spots share the belt)', r.code === 201 && db.bookings.length === 3, `${r.code} ${r.body.message}`);
+    // Day rules: a weekday-only rate cannot be booked on a Sunday.
+    const weekdayRate = { _id: OID(), name: 'Weekday breakfast', kind: 'TIME_BELT', startTime: '06:00', endTime: '10:00', spotSeconds: 30, days: [1, 2, 3, 4, 5], price: 10000, isActive: true };
+    fm1.rateCard.push(weekdayRate);
+    const nextDay = (wd) => { const d = new Date(Date.now() + 2 * 864e5); while (d.getUTCDay() !== wd) d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };
+    r = await pay(U.indiv, 'ivy', [rateItem(weekdayRate, { date: nextDay(0) })]);
+    check('C10b A Mon–Fri rate on a Sunday → 400 "only sold on Monday–Friday"', isContract(r, 'items.0') && /only sold on Monday–Friday/.test(r.body.message), `${r.code} ${r.body.message}`);
+    r = await pay(U.indiv, 'ivy', [rateItem(weekdayRate, { date: nextDay(1) })]);
+    check('C10c …and books on a Monday', r.code === 201, `${r.code} ${r.body.message}`);
     process.env.VAT_PERCENT = '0';
     r = await pay(U.indiv, 'ivy', [rateItem(yourView15)]);
     check('C11 VAT_PERCENT=0 turns VAT off (₦125,000 charged)', r.code === 201 && db.payments.at(-1).vat === 0 && db.payments.at(-1).amount === 125000, `${r.code}`);

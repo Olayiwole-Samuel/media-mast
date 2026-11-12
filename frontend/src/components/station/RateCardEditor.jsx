@@ -13,7 +13,18 @@ import { formatMoney } from "@/lib/status";
 // saveRates(rates) saves and resolves to the saved rate card. By default it
 // saves through the station desk; the verification page passes its own.
 
-const LENGTHS = [60, 45, 30, 15];
+const LENGTHS = [60, 45, 30, 15, 5];
+
+// Days a rate is sold (0 = Sunday … 6 = Saturday); empty = every day.
+const DAY_PRESETS = [
+    { value: "", label: "Every day", days: [] },
+    { value: "1,2,3,4,5", label: "Mon–Fri", days: [1, 2, 3, 4, 5] },
+    { value: "0,6", label: "Sat & Sun", days: [0, 6] },
+    { value: "6", label: "Saturdays", days: [6] },
+    { value: "0", label: "Sundays", days: [0] },
+];
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const daysKey = (days) => [...(days || [])].sort((a, b) => a - b).join(",");
 
 const inputClass =
     "w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white";
@@ -47,16 +58,16 @@ const toGroups = (rateCard, isPress) => {
     if (isPress) {
         return (rateCard || []).map((r) => ({
             key: newKey(), _id: r._id, name: r.name || "", code: r.code || "", size: r.size || "",
-            colour: r.colour || "COLOUR", price: r.price ? String(r.price) : "", isActive: r.isActive !== false,
+            colour: r.colour || "COLOUR", price: r.price ? String(r.price) : "", isActive: r.isActive !== false, days: r.days || [],
         }));
     }
     const groups = new Map();
     for (const r of rateCard || []) {
-        const id = [r.name, r.kind, r.code || "", r.startTime || "", r.endTime || ""].join("|");
+        const id = [r.name, r.kind, r.code || "", r.startTime || "", r.endTime || "", daysKey(r.days)].join("|");
         if (!groups.has(id)) {
             groups.set(id, {
                 key: newKey(), name: r.name || "", kind: r.kind || "TIME_BELT", code: r.code || "",
-                startTime: r.startTime || "", endTime: r.endTime || "", prices: {}, ids: {}, isActive: r.isActive !== false,
+                startTime: r.startTime || "", endTime: r.endTime || "", prices: {}, ids: {}, isActive: r.isActive !== false, days: r.days || [],
             });
         }
         const g = groups.get(id);
@@ -74,7 +85,7 @@ const toRates = (groups, isPress) => {
         return groups.map((g) => ({
             ...(g._id ? { _id: g._id } : {}),
             name: g.name.trim(), kind: "PLACEMENT", code: g.code.trim() || null,
-            size: g.size.trim() || null, colour: g.colour || null, price: Number(g.price), isActive: g.isActive,
+            size: g.size.trim() || null, colour: g.colour || null, price: Number(g.price), isActive: g.isActive, days: g.days || [],
         }));
     }
     const out = [];
@@ -86,7 +97,7 @@ const toRates = (groups, isPress) => {
                 ...(g.ids[len] ? { _id: g.ids[len] } : {}),
                 name: g.name.trim(), kind: g.kind, code: g.code.trim() || null,
                 ...(g.kind === "TIME_BELT" ? { startTime: g.startTime || null, endTime: g.endTime || null } : {}),
-                spotSeconds: len, price: Number(raw), isActive: g.isActive,
+                spotSeconds: len, price: Number(raw), isActive: g.isActive, days: g.days || [],
             });
         }
     }
@@ -95,7 +106,7 @@ const toRates = (groups, isPress) => {
 
 const blank = (isPress) => (isPress
     ? { key: newKey(), name: "", code: "", size: "", colour: "COLOUR", price: "", isActive: true }
-    : { key: newKey(), name: "", kind: "TIME_BELT", code: "", startTime: "", endTime: "", prices: {}, ids: {}, isActive: true });
+    : { key: newKey(), name: "", kind: "TIME_BELT", code: "", startTime: "", endTime: "", prices: {}, ids: {}, isActive: true, days: [] });
 
 export default function RateCardEditor({ station, onSaved, saveRates, title = "Rate card", compact = false }) {
     const isPress = station.type === "PRESS";
@@ -204,8 +215,17 @@ export default function RateCardEditor({ station, onSaved, saveRates, title = "R
                                 )}
                             </div>
 
+                            <label className="mt-2 block text-xs text-slate-500 sm:w-1/3">Sold on
+                                <select value={daysKey(g.days)} onChange={(e) => set(g.key, "days", e.target.value ? e.target.value.split(",").map(Number) : [])} className={`${inputClass} mt-1`}>
+                                    {DAY_PRESETS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                                    {!DAY_PRESETS.some((p) => p.value === daysKey(g.days)) && (
+                                        <option value={daysKey(g.days)}>{(g.days || []).map((n) => DAY_NAMES[n]).join(", ")}</option>
+                                    )}
+                                </select>
+                            </label>
+
                             {!isPress && (
-                                <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
                                     {LENGTHS.map((len) => (
                                         <label key={len} className="text-xs text-slate-500">{len}-second spot ({currency})
                                             <input type="number" min="1" step="any" value={g.prices[len] ?? ""} onChange={(e) => setPrice(g.key, len, e.target.value)} className={`${inputClass} mt-1`} placeholder="Not sold" />

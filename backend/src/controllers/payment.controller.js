@@ -49,6 +49,14 @@ const {
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const daysLabel = (days) => {
+    const d = [...days].sort((a, b) => a - b).join(',');
+    if (d === '1,2,3,4,5') return 'Monday–Friday';
+    if (d === '0,6') return 'weekends';
+    return [...days].sort((a, b) => a - b).map((n) => DAY_NAMES[n]).join(', ');
+};
+
 // Every booked spot names the advert (with its ARCON certificate) to air.
 // REQUIRE_CREATIVE=false relaxes this (older test harnesses only).
 const isCreativeRequired = () => String(process.env.REQUIRE_CREATIVE ?? 'true').trim().toLowerCase() !== 'false';
@@ -200,6 +208,14 @@ const checkout = async (req, res) => {
 
             const campaignProblem = checkCampaignForBooking(campaign, fields.value.dateOnly);
             if (campaignProblem) return itemError(index, campaignProblem);
+
+            // Some rates are sold only on certain days (e.g. Mon–Fri, or Saturdays).
+            if (rate && Array.isArray(rate.days) && rate.days.length) {
+                const weekday = new Date(`${fields.value.dateOnly}T12:00:00Z`).getUTCDay();
+                if (!rate.days.includes(weekday)) {
+                    return itemError(index, `The ${rate.name} rate is only sold on ${daysLabel(rate.days)}`);
+                }
+            }
 
             let creative = null;
             if (item.creativeId) {

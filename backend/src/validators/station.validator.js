@@ -173,6 +173,8 @@ const rateSchema = Joi.object({
     startTime: Joi.string().pattern(HHMM).allow(null).messages({ 'string.pattern.base': 'Use HH:mm for times' }),
     endTime: Joi.string().pattern(HHMM).allow(null).messages({ 'string.pattern.base': 'Use HH:mm for times' }),
     spotSeconds: Joi.number().integer().min(1).max(3600).allow(null).messages({ 'number.base': 'Spot length must be a number of seconds' }),
+    // Days the rate is sold (0 = Sunday … 6 = Saturday); empty or missing = every day.
+    days: Joi.array().items(Joi.number().integer().min(0).max(6)).unique().max(7).allow(null).messages({ 'number.max': 'Days are 0 (Sunday) to 6 (Saturday)' }),
     size: Joi.string().trim().max(40).allow(null, ''),
     colour: Joi.string().trim().uppercase().valid('COLOUR', 'BLACK_WHITE').allow(null, ''),
     price: Joi.number().greater(0).max(1e10).required().messages({ 'number.greater': 'Each rate needs a price above 0', 'any.required': 'Each rate needs a price' }),
@@ -198,7 +200,7 @@ const validateRateCard = (body) => {
     }
     // One belt or programme can be sold in several spot lengths (60/45/30/15s)
     // or, for press, sizes and colours; the same combination may not repeat.
-    const keys = value.rates.map((r) => [r.name.toLowerCase(), r.spotSeconds || '', (r.size || '').toLowerCase(), r.colour || ''].join('|'));
+    const keys = value.rates.map((r) => [r.name.toLowerCase(), r.spotSeconds || '', (r.size || '').toLowerCase(), r.colour || '', [...(r.days || [])].sort().join(''), r.startTime || ''].join('|'));
     const dup = keys.findIndex((k, i) => keys.indexOf(k) !== i);
     if (dup !== -1) {
         const r = value.rates[dup];
@@ -215,6 +217,7 @@ const validateRateCard = (body) => {
                 endTime: r.kind === 'TIME_BELT' ? r.endTime : null,
                 // Spot length applies to belts and to in-programme spots (press placements leave it empty).
                 spotSeconds: r.spotSeconds ?? null,
+                days: (r.days || []).length === 7 ? [] : [...(r.days || [])].sort((a, b) => a - b),
                 size: r.kind === 'PLACEMENT' ? (r.size || null) : null,
                 colour: r.kind === 'PLACEMENT' ? (r.colour || null) : null,
                 price: r.price,

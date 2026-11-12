@@ -1,13 +1,19 @@
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const Station = require('../models/Station');
-const { RATE_CARD_STATIONS } = require('../data/rateCards');
+const { RATE_CARD_STATIONS: TV_CARDS } = require('../data/rateCards');
+const { RADIO_RATE_CARD_STATIONS } = require('../data/rateCardsRadio');
+const { SHEET_RATE_CARD_STATIONS } = require('../data/rateCardsSheet2024');
+
+// Every station with a loaded rate card: NTA/Channels/TVC and the radio PDFs
+// first, then the "Media Rates Nigeria 2024" spreadsheet (TV, radio, press).
+const RATE_CARD_STATIONS = [...TV_CARDS, ...RADIO_RATE_CARD_STATIONS, ...SHEET_RATE_CARD_STATIONS];
 const { validateRateCard } = require('../validators/station.validator');
 
 dotenv.config({ quiet: true });
 
 // ─────────────────────────────────────────────────────────────
-// LOAD THE REAL TV RATE CARDS (NTA Group A, Channels, TVC)
+// LOAD THE REAL RATE CARDS (TV, radio and press)
 //
 // Usage (from backend/):  node src/scripts/createRateCardStations.js --yes
 //

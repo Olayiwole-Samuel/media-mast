@@ -205,6 +205,8 @@ const StationSchema = new mongoose.Schema(
                         startTime: { type: String, default: null }, // HH:mm, TIME_BELT only
                         endTime: { type: String, default: null }, // HH:mm; before startTime = runs past midnight
                         spotSeconds: { type: Number, min: 1, max: 3600, default: null },
+                        // Days this rate is sold (0 = Sunday … 6 = Saturday); empty = every day.
+                        days: { type: [Number], default: [] },
                         size: { type: String, trim: true, maxlength: 40, default: null },
                         colour: { type: String, enum: ['COLOUR', 'BLACK_WHITE', null], default: null },
                         price: { type: Number, required: true, min: 1 },
