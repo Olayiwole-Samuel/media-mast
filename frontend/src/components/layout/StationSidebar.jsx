@@ -27,7 +27,7 @@ export default function StationSidebar({ user, mobileOpen = false, onMobileClose
                     <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 text-white">
                         <Radio className="h-4 w-4" />
                     </span>
-                    Station desk
+                    Media house desk
                 </Link>
                 {onMobileClose && (
                     <button type="button" onClick={onMobileClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 lg:hidden dark:hover:bg-slate-800" aria-label="Close menu">

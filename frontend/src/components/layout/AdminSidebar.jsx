@@ -41,7 +41,7 @@ const NAV_ITEMS = [
     { label: "Media houses", href: "/admin/stations", icon: Radio },
     { label: "Media house managers", href: "/admin/station-managers", icon: UserCog },
     // Every station's desk (requests, schedule, calendar, rates).
-    { label: "Station desk", href: "/station", icon: Inbox },
+    { label: "Media house desk", href: "/station", icon: Inbox },
     { label: "Users", href: "/admin/users", icon: Users, hasDropdown: true },
     { label: "Campaigns", href: "/admin/campaigns", icon: Megaphone },
     { label: "Bookings", href: "/admin/bookings", icon: CalendarDays },

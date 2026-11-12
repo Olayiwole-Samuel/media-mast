@@ -98,12 +98,6 @@ export default function StationProfilePage() {
         e.preventDefault();
         setNotice(null);
 
-        const amount = Number(form.priceAmount);
-        if (!Number.isFinite(amount) || amount <= 0) {
-            setNotice({ type: "error", text: "Please enter a price greater than 0." });
-            return;
-        }
-
         const payload = {
             description: form.description.trim(),
             phone: form.phone.trim(),
@@ -115,7 +109,6 @@ export default function StationProfilePage() {
             reach: form.reach.trim(),
             advertisingFormats: splitList(form.advertisingFormats),
             features: splitList(form.features),
-            pricing: { amount, currency: station?.pricing?.currency || "NGN", unit: form.priceUnit },
             inventoryStatus: form.inventoryStatus,
         };
 
@@ -176,27 +169,19 @@ export default function StationProfilePage() {
 
             <form onSubmit={handleSave} className="space-y-6">
                 <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-                    <h2 className="font-semibold text-slate-900 dark:text-white">Rate and availability</h2>
+                    <h2 className="font-semibold text-slate-900 dark:text-white">Availability</h2>
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                        <Field label={`Price (${station.pricing?.currency || "NGN"})`}>
-                            <input type="number" min="1" step="any" value={form.priceAmount} onChange={update("priceAmount")} className={inputClass} required />
-                        </Field>
-                        <Field label="Per">
-                            <select value={form.priceUnit} onChange={update("priceUnit")} className={inputClass}>
-                                {UNITS.map((u) => <option key={u} value={u}>{u.toLowerCase()}</option>)}
-                            </select>
-                        </Field>
-                        <Field label="Availability">
+                        <Field label="Taking bookings?">
                             <select value={form.inventoryStatus} onChange={update("inventoryStatus")} className={inputClass}>
                                 {AVAILABILITY.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
                             </select>
                         </Field>
                     </div>
-                    <p className="text-xs text-slate-400">New prices apply to new bookings; requests already made keep the price they were made at.</p>
+                    <p className="text-xs text-slate-400">Your prices are set in your rate card below. New rates apply to new bookings; requests already made keep the price they were made at.</p>
                 </section>
 
                 <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-                    <h2 className="font-semibold text-slate-900 dark:text-white">About your station</h2>
+                    <h2 className="font-semibold text-slate-900 dark:text-white">About your media house</h2>
                     <Field label="Description">
                         <textarea rows={4} maxLength={2000} value={form.description} onChange={update("description")} className={inputClass} />
                     </Field>

@@ -3,13 +3,18 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Inbox, CalendarCheck, BadgeCheck, Wallet, ArrowRight, AlertTriangle } from "lucide-react";
+import { Inbox, CalendarCheck, BadgeCheck, Wallet, ArrowRight, AlertTriangle, Radio } from "lucide-react";
+import { useSession } from "@/lib/auth";
 import { getStationPortalSummary } from "@/lib/api";
 import { formatMoney, formatDate } from "@/lib/status";
 import { PageLoading, ApiErrorState } from "@/components/common/PageState";
 
 // Station overview: what needs a response, what's coming up, and earnings
 // from paid bookings (GET /station-portal/summary).
+
+const spotLine = (b) => b.rateName
+    ? `${b.rateName}${b.spotSeconds ? ` · ${b.spotSeconds}s spot` : ""}`
+    : `${b.time} · ${b.duration} min`;
 
 function Stat({ icon: Icon, label, value, href, tone = "slate" }) {
     const tones = {
@@ -30,6 +35,8 @@ function Stat({ icon: Icon, label, value, href, tone = "slate" }) {
 }
 
 export default function StationOverviewPage() {
+    const { user } = useSession();
+    const isAdmin = user?.accountType === "ADMIN";
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -58,14 +65,18 @@ export default function StationOverviewPage() {
     const counts = data?.counts || {};
     const [currency, earnings] = Object.entries(data?.earnings || {})[0] || ["NGN", { booked: 0, completed: 0, thisMonth: 0 }];
     const inactive = (data?.stations || []).filter((s) => s.approvalStatus !== "APPROVED" || !s.isActive);
+    // Bookings are priced from the rate card: a station without rates can't be booked.
+    const noRates = (data?.stations || []).filter((s) => !(s.rateCard || []).some((r) => r && r.isActive !== false));
 
     return (
         <div className="space-y-6 p-4 sm:p-6 lg:p-8">
             <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
                 <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-                    {(data?.stations || []).map((s) => s.name).join(" · ") || "Your station"}
+                    {isAdmin ? "All media houses" : (data?.stations || []).map((s) => s.name).join(" · ") || "Your media house"}
                 </h1>
-                <p className="mt-1 text-slate-500 dark:text-slate-400">Booking requests, your schedule and earnings in one place.</p>
+                <p className="mt-1 text-slate-500 dark:text-slate-400">
+                    {isAdmin ? `${(data?.stations || []).length} media houses: booking requests, schedules and earnings.` : "Booking requests, your schedule and earnings in one place."}
+                </p>
             </motion.div>
 
             {inactive.length > 0 && (
@@ -73,6 +84,13 @@ export default function StationOverviewPage() {
                     <AlertTriangle className="h-5 w-5 shrink-0" />
                     <p>{inactive.map((s) => s.name).join(", ")} {inactive.length === 1 ? "is" : "are"} not live right now, so advertisers can&apos;t book {inactive.length === 1 ? "it" : "them"}. Contact Media Masters if this is unexpected.</p>
                 </div>
+            )}
+
+            {!isAdmin && noRates.length > 0 && (
+                <Link href="/station/profile" className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 hover:bg-amber-100 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
+                    <Radio className="h-5 w-5 shrink-0" />
+                    <p>{noRates.map((s) => s.name).join(", ")} {noRates.length === 1 ? "has" : "have"} no rates yet, so advertisers can&apos;t book {noRates.length === 1 ? "it" : "them"}. Add your rate card under Rates &amp; profile →</p>
+                </Link>
             )}
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -96,7 +114,7 @@ export default function StationOverviewPage() {
                         {data.upcoming.map((b) => (
                             <li key={b._id} className="flex items-center justify-between gap-4 px-5 py-3 text-sm">
                                 <span className="text-slate-900 dark:text-white">
-                                    {formatDate(b.date)} at {b.time} · {b.duration} min
+                                    {formatDate(b.date)} · {spotLine(b)}
                                     <span className="block text-xs text-slate-500">{b.stationId?.name} · Ref {b.bookingReference}</span>
                                 </span>
                                 <span className="text-xs font-medium text-slate-600 dark:text-slate-300">{b.status === "SCHEDULED" ? "Scheduled" : "Accepted"}</span>
@@ -115,7 +133,7 @@ export default function StationOverviewPage() {
                     <p className="text-xs uppercase tracking-wide text-slate-400">Of which aired (completed)</p>
                     <p className="text-lg font-semibold text-slate-900 dark:text-white">{formatMoney(earnings.completed, currency)}</p>
                 </div>
-                <p className="text-xs text-slate-400 sm:col-span-2">Payments currently run in test mode; payouts to stations start when online payment goes live.</p>
+                <p className="text-xs text-slate-400 sm:col-span-2">Amounts are your rate card prices (before VAT). Payments currently run in test mode; payouts to media houses start when online payment goes live.</p>
             </section>
         </div>
     );

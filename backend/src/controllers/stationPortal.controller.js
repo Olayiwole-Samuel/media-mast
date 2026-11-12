@@ -283,12 +283,12 @@ const removeBlackout = async (req, res) => {
 // Dashboard numbers for the caller's stations.
 const getSummary = async (req, res) => {
     try {
-        const stations = await Station.find(stationOwnerFilter(req)).select('_id name approvalStatus isActive inventoryStatus');
+        const stations = await Station.find(stationOwnerFilter(req)).select('_id name type approvalStatus isActive inventoryStatus rateCard');
         const stationIds = stations.map((s) => s._id);
 
         const bookings = stationIds.length
             ? await Booking.find({ stationId: { $in: stationIds } })
-                .select('stationId status date time duration price currency paymentStatus bookingReference createdAt cancellationFee cancelledBy')
+                .select('stationId status date time duration price currency paymentStatus bookingReference createdAt cancellationFee cancelledBy rateName spotSeconds slot')
                 .populate('stationId', 'name')
             : [];
 

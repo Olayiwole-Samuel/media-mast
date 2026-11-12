@@ -25,7 +25,7 @@ export default function StationLayout({ children }) {
                     <button type="button" onClick={() => setMobileOpen(true)} className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden dark:text-slate-300 dark:hover:bg-slate-800" aria-label="Open menu">
                         <Menu className="h-5 w-5" />
                     </button>
-                    <span className="font-semibold text-slate-900 lg:hidden dark:text-white">Station desk</span>
+                    <span className="font-semibold text-slate-900 lg:hidden dark:text-white">Media house desk</span>
                     <div className="flex-1" />
                     <NotificationBell />
                 </header>

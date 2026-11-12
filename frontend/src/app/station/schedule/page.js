@@ -9,6 +9,10 @@ import { formatDate } from "@/lib/status";
 import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/PageState";
 
 // Accepted and scheduled spots, grouped by day (from GET /bookings/station).
+const spotLine = (b) => b.rateName
+    ? `${b.rateName}${b.spotSeconds ? ` · ${b.spotSeconds}s spot` : ""}`
+    : `${b.time} · ${b.duration} min`;
+
 export default function StationSchedulePage() {
     const [bookings, setBookings] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -71,8 +75,8 @@ export default function StationSchedulePage() {
                                 {items.map((b) => (
                                     <li key={b._id} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
                                         <span>
-                                            <span className="font-medium text-slate-900 dark:text-white">{b.time}</span>
-                                            <span className="text-slate-500"> · {b.duration} min · {b.stationId?.name} · {b.companyId?.name || b.userId?.name || "Advertiser"}</span>
+                                            <span className="font-medium text-slate-900 dark:text-white">{spotLine(b)}</span>
+                                            <span className="text-slate-500"> · {b.stationId?.name} · {b.companyId?.name || b.userId?.name || "Advertiser"}{b.creativeId?.name ? ` · advert: ${b.creativeId.name}` : ""}</span>
                                         </span>
                                         <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${b.status === "SCHEDULED" ? "bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300" : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"}`}>
                                             {b.status === "SCHEDULED" ? "Scheduled" : "Accepted"}
