@@ -49,6 +49,10 @@ const {
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
+// A rate-card slot (belt, programme or placement) regardless of spot length:
+// the 60s, 45s, 30s… rates of "Run of spot 05:00–16:00" share one key.
+const rateSlotKey = (r) => [r.name, r.kind, r.startTime || '', r.endTime || '', r.size || '', r.colour || '', (r.days || []).join('')].join('|');
+
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const daysLabel = (days) => {
     const d = [...days].sort((a, b) => a - b).join(',');
@@ -281,6 +285,33 @@ const checkout = async (req, res) => {
                 ) {
                     return sendValidationErrors(res, [fieldError(`items.${b}`, `Items ${a + 1} and ${b + 1} overlap on the same station`)]);
                 }
+            }
+        }
+
+        // ── One spot length per belt/programme, per station, per day ──
+        // (e.g. TVC "Run of spot 05:00–16:00": 60s or 30s on that day, not both),
+        // counting this campaign's earlier bookings that are still live.
+        const rateItems = prepared.filter((p) => p.rate);
+        if (rateItems.length) {
+            const taken = new Map(); // station|date|slot → { rateId, label }
+            const earlier = await Booking.find({ campaignId: campaign._id });
+            for (const b of earlier || []) {
+                if (!b.rateId || ['REJECTED', 'CANCELLED', 'REFUNDED', 'EXPIRED'].includes(b.status)) continue;
+                const station = stationById.get(String(b.stationId?._id || b.stationId));
+                const rate = (station?.rateCard || []).find((r) => r && String(r._id) === String(b.rateId));
+                if (!rate) continue;
+                const day = new Date(b.date).toISOString().slice(0, 10);
+                taken.set(`${station._id}|${day}|${rateSlotKey(rate)}`, { rateId: String(rate._id), label: `already booked at ${rate.spotSeconds ? `${rate.spotSeconds}s` : 'another size'} for this campaign` });
+            }
+            for (const [index, item] of prepared.entries()) {
+                if (!item.rate) continue;
+                const key = `${item.stationId}|${item.dateOnly}|${rateSlotKey(item.rate)}`;
+                const before = taken.get(key);
+                // More spots of the same rate are fine; a second length in the slot is not.
+                if (before && before.rateId !== String(item.rate._id)) {
+                    return itemError(index, `${item.station.name} "${item.rate.name}" on ${item.dateOnly} is ${before.label}: pick one spot length per slot`);
+                }
+                if (!before) taken.set(key, { rateId: String(item.rate._id), label: `already in this checkout at ${item.rate.spotSeconds ? `${item.rate.spotSeconds}s` : 'another size'} (item ${index + 1})` });
             }
         }
 

@@ -30,12 +30,16 @@ export const fieldsFromRate = (station, rate) => {
     return { time: "06:00", duration: 1, slot: station.type === "PRESS" ? "EDITION" : station.type === "BILLBOARD" ? "DISPLAY" : "PROGRAMME" };
 };
 
+// One belt / programme / placement whatever the spot length (the server's
+// rateSlotKey): only one length per slot can be booked on a day.
+export const slotKey = (r) => [r.name, r.kind, r.startTime || "", r.endTime || "", r.size || "", r.colour || "", (r.days || []).join("")].join("|");
+
 // Rate rows → one group per belt / programme / placement, each with its spot lengths.
 export const groupRates = (rates) => {
     const map = new Map();
     for (const r of rates || []) {
         if (!r || r.isActive === false) continue;
-        const key = [r.name, r.kind, r.startTime || "", r.endTime || "", r.size || "", r.colour || "", (r.days || []).join("")].join("|");
+        const key = slotKey(r);
         if (!map.has(key)) map.set(key, { key, name: r.name, kind: r.kind, startTime: r.startTime, endTime: r.endTime, size: r.size, colour: r.colour, days: r.days || [], options: [] });
         map.get(key).options.push(r);
     }

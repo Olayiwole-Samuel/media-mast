@@ -13,7 +13,7 @@ import { formatMoney } from "@/lib/status";
 import { useSession } from "@/lib/auth";
 import { useCart, advertiserPaths, MAX_CART_ITEMS } from "@/lib/cart";
 import { useCheckoutDiscount, discountPercentFor } from "@/lib/discounts";
-import { daysLabel, soldOn, fieldsFromRate, groupRates, cardLengths, groupWhen, weekdayOf } from "@/lib/rates";
+import { daysLabel, soldOn, fieldsFromRate, groupRates, cardLengths, groupWhen, weekdayOf, slotKey } from "@/lib/rates";
 
 // ─────────────────────────────────────────────────────────────
 // Book airtime: one page, many media houses.
@@ -22,6 +22,7 @@ import { daysLabel, soldOn, fieldsFromRate, groupRates, cardLengths, groupWhen, 
 //   2. Tick the slots you want on as many TV, radio and press houses as
 //      you like: each station shows its full rate card, belt or programme
 //      down the side and spot length (60/45/30/15/5 s) across the top.
+//      One length per belt or programme: tick 60s and that row's 30s etc. lock.
 //   3. Add them all to the cart and pay once.
 //
 // Each media house then confirms the date or asks to reschedule.
@@ -62,7 +63,7 @@ const selectClass =
     "w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white";
 
 // One media house with its rate card as a grid of tick boxes.
-function StationRates({ station, date, picked, inCart, onToggle, open, onOpenChange, advertSeconds, availability }) {
+function StationRates({ station, date, picked, inCart, takenSlots, onToggle, open, onOpenChange, advertSeconds, availability }) {
     const rates = activeRates(station);
     const groups = groupRates(rates);
     const lengths = cardLengths(rates);
@@ -78,9 +79,14 @@ function StationRates({ station, date, picked, inCart, onToggle, open, onOpenCha
         const offDay = !soldOn(rate, date);
         const blocked = !offDay && date ? calendarProblem(availability, date, timing.time, timing.duration) : "";
         const already = inCart.has(rate._id);
-        const disabled = offDay || !!blocked || already;
         const checked = picked.has(rate._id);
-        const title = offDay ? `Only sold ${daysLabel(rate.days)}` : blocked || (already ? "Already in your cart for this date" : undefined);
+        // Another length of this belt/programme is ticked or in the cart.
+        const taken = takenSlots.get(`${station._id}|${slotKey(rate)}`);
+        const otherLength = !checked && !already && taken && taken.rateId !== rate._id ? taken : null;
+        const disabled = offDay || !!blocked || already || !!otherLength;
+        const title = offDay ? `Only sold ${daysLabel(rate.days)}`
+            : blocked || (already ? "Already in your cart for this date"
+                : otherLength ? `One length per slot: you have the ${otherLength.seconds ? `${otherLength.seconds}s` : "other"} spot${otherLength.inCart ? " in your cart" : ""}. Untick it to change.` : undefined);
         return (
             <label title={title} className={`inline-flex min-w-[6.5rem] cursor-pointer items-center justify-end gap-2 rounded-lg border px-2 py-1.5 transition-colors ${
                 disabled ? "cursor-not-allowed border-transparent opacity-40"
@@ -88,7 +94,7 @@ function StationRates({ station, date, picked, inCart, onToggle, open, onOpenCha
                         : "border-slate-200 hover:border-emerald-300 dark:border-slate-700"
             }`}>
                 <span className={`text-xs font-medium ${checked ? "text-emerald-800 dark:text-emerald-200" : "text-slate-700 dark:text-slate-200"}`}>
-                    {already ? "In cart" : formatMoney(rate.price, currency)}
+                    {already ? "In cart" : otherLength ? "—" : formatMoney(rate.price, currency)}
                 </span>
                 <input type="checkbox" className="h-4 w-4 accent-emerald-600" checked={checked} disabled={disabled} onChange={() => onToggle(station, rate)} />
             </label>
@@ -150,7 +156,7 @@ function StationRates({ station, date, picked, inCart, onToggle, open, onOpenCha
                         </table>
                     </div>
                     <p className="px-4 py-2 text-xs text-slate-400">
-                        Prices per {station.type === "PRESS" ? "insertion" : "spot"}, before {VAT_PERCENT}% VAT. Faded boxes aren&apos;t sold on your air date.
+                        Prices per {station.type === "PRESS" ? "insertion" : "spot"}, before {VAT_PERCENT}% VAT. One spot length per belt or programme; faded boxes aren&apos;t available on your air date.
                     </p>
                 </div>
             )}
@@ -258,6 +264,19 @@ export default function BookingPage() {
         .filter((i) => i.campaignId === campaignId && i.date === airDate)
         .map((i) => i.rateId)), [cart.items, campaignId, airDate]);
 
+    // station|slot → the length already chosen there (ticked here or in the cart).
+    const takenSlots = useMemo(() => {
+        const map = new Map();
+        const stationById = new Map(stations.map((s) => [s._id, s]));
+        for (const i of cart.items) {
+            if (i.campaignId !== campaignId || i.date !== airDate) continue;
+            const rate = (stationById.get(i.stationId)?.rateCard || []).find((r) => r && r._id === i.rateId);
+            if (rate) map.set(`${i.stationId}|${slotKey(rate)}`, { rateId: rate._id, seconds: rate.spotSeconds, inCart: true });
+        }
+        for (const { station, rate } of picked.values()) map.set(`${station._id}|${slotKey(rate)}`, { rateId: rate._id, seconds: rate.spotSeconds, inCart: false });
+        return map;
+    }, [stations, cart.items, campaignId, airDate, picked]);
+
     const regions = useMemo(() => [...new Set(stations.map((s) => s.location?.state).filter(Boolean))].sort(), [stations]);
     const pickedStations = useMemo(() => new Set([...picked.values()].map((p) => p.station._id)), [picked]);
     const visible = useMemo(() => {
@@ -281,8 +300,12 @@ export default function BookingPage() {
         }
         setPicked((prev) => {
             const next = new Map(prev);
+            const sameSlot = [...next.values()].find((p) => p.station._id === station._id && slotKey(p.rate) === slotKey(rate) && p.rate._id !== rate._id);
             if (next.has(rate._id)) next.delete(rate._id);
-            else if (next.size >= room) {
+            else if (sameSlot) {
+                setError(`One spot length per slot: untick the ${sameSlot.rate.spotSeconds ? `${sameSlot.rate.spotSeconds}s` : "other"} ${rate.name} first.`);
+                return prev;
+            } else if (next.size >= room) {
                 setError(`A cart holds ${MAX_CART_ITEMS} spots${cart.count ? ` and already has ${cart.count}` : ""}. Check out these first, then book more.`);
                 return prev;
             } else next.set(rate._id, { station, rate });
@@ -472,6 +495,7 @@ export default function BookingPage() {
                                 date={airDate}
                                 picked={picked}
                                 inCart={inCart}
+                                takenSlots={takenSlots}
                                 onToggle={toggle}
                                 open={openIds.has(s._id)}
                                 onOpenChange={(o) => setOpen(s._id, o)}

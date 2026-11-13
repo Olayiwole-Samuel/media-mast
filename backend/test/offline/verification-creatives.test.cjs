@@ -428,6 +428,16 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
     r = await pay(U.indiv, 'ivy', [rateItem(yourView15)]);
     check('C11 VAT_PERCENT=0 turns VAT off (₦125,000 charged)', r.code === 201 && db.payments.at(-1).vat === 0 && db.payments.at(-1).amount === 125000, `${r.code}`);
     process.env.VAT_PERCENT = '7.5';
+    // One spot length per belt, per station, per day: 30s booked → no 60s in the same belt that day.
+    const ros60 = { ...ros30, _id: OID(), spotSeconds: 60, price: 140000 };
+    fm1.rateCard.push(ros60);
+    const before12 = db.bookings.length;
+    r = await pay(U.indiv, 'ivy', [rateItem(ros60)]);
+    check('C12 Belt already booked at 30s that day → 60s in the same belt refused (400 "one spot length per slot")', isContract(r, 'items.0') && /one spot length per slot/.test(r.body.message) && db.bookings.length === before12, `${r.code} ${r.body.message}`);
+    r = await pay(U.indiv, 'ivy', [rateItem(ros60, { date: nextDay(3) }), rateItem(ros30, { date: nextDay(3) })]);
+    check('C13 60s and 30s of the same belt in one checkout → 400 on the second, nothing booked', isContract(r, 'items.1') && /one spot length per slot/.test(r.body.message) && db.bookings.length === before12, `${r.code} ${r.body.message}`);
+    r = await pay(U.indiv, 'ivy', [rateItem(ros60, { date: nextDay(3) }), rateItem(yourView15, { date: nextDay(3) })]);
+    check('C14 …one length per belt (plus another slot) books', r.code === 201 && db.bookings.length === before12 + 2, `${r.code} ${r.body.message}`);
 
     // ── S: the media house sees the advert and its ARCON certificate ──
     r = await call(U.station, 'GET', `/api/v1/bookings/${b1._id}/creative`);
