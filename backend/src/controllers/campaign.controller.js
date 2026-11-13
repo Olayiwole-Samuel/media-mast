@@ -126,14 +126,15 @@ const createCampaign = async (req, res) => {
             clientBrand,
         } = req.body;
 
-        if (!name || budget === undefined || budget === null) {
+        if (!name) {
             return res.status(400).json({
                 success: false,
-                message: 'Name and budget are required',
+                message: 'Name is required',
             });
         }
 
-        const budgetError = getBudgetError(budget);
+        // Budget is optional now; when sent it must still be a valid amount.
+        const budgetError = budget === undefined || budget === null ? null : getBudgetError(budget);
 
         if (budgetError) {
             return res.status(400).json({
@@ -146,7 +147,7 @@ const createCampaign = async (req, res) => {
             name,
             description,
             objective: objective || 'BRAND_AWARENESS',
-            budget,
+            budget: budget ?? null,
             currency: currency || 'NGN',
             startDate: startDate || null,
             endDate: endDate || null,

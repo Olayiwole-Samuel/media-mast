@@ -160,7 +160,7 @@ const notifyCheckout = safely('checkout', async ({ payment, bookings }) => {
 const STATUS_COPY = {
     ACCEPTED: { subject: 'accepted', line: 'The station has accepted your booking.' },
     REJECTED: { subject: 'declined', line: 'The station has declined your booking.' },
-    CHANGES_REQUESTED: { subject: 'needs changes', line: 'The station has asked for changes before it can accept your booking. Update it and resubmit.' },
+    CHANGES_REQUESTED: { subject: 'needs rescheduling', line: 'The station cannot take your spot as booked (for example, that date is already taken). Pick a new date and resubmit it from your bookings.' },
     SCHEDULED: { subject: 'scheduled', line: 'Your spot is scheduled to air.' },
     COMPLETED: { subject: 'aired', line: 'The station has confirmed your spot has aired.' },
     CANCELLED: { subject: 'cancelled', line: 'The station has cancelled your booking.' },
@@ -197,6 +197,7 @@ const notifyBookingStatus = safely('booking status', async (booking, { actor, to
             `${station ? station.name : 'The station'} — ${spotWhen(booking)}.`,
             copy.line,
             ...(booking.stationNote ? [`Note from the station: ${booking.stationNote}`] : []),
+            ...(booking.proposedDate ? [`The station suggests: ${new Date(booking.proposedDate).toDateString()}`] : []),
             ...(booking.proofUrl && toStatus === 'COMPLETED' ? [`Broadcast proof: ${booking.proofUrl}`] : []),
             ...[refundLine(booking)].filter(Boolean),
         ],
@@ -206,7 +207,7 @@ const notifyBookingStatus = safely('booking status', async (booking, { actor, to
     await pushInApp([user], {
         type: 'BOOKING_STATUS',
         title: `${station ? station.name : 'Station'}: booking ${copy.subject}`,
-        body: [spotWhen(booking), booking.stationNote ? `Note: ${booking.stationNote}` : null, refundLine(booking)].filter(Boolean).join(' · '),
+        body: [spotWhen(booking), booking.stationNote ? `Note: ${booking.stationNote}` : null, booking.proposedDate ? `Suggested date: ${new Date(booking.proposedDate).toDateString()}` : null, refundLine(booking)].filter(Boolean).join(' · '),
         link: bookingsPath(user),
     });
     return true;

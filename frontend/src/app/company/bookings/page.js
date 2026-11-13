@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { CalendarDays, Loader2, Plus } from "lucide-react";
+import Link from "next/link";
+import { CalendarDays, Loader2, Plus, X } from "lucide-react";
 import { getBookings, cancelBooking, resubmitBooking, getBookingCancellationQuote } from "@/lib/api";
 import { bookingStatus, canCancelBooking, formatMoney, formatDate } from "@/lib/status";
 import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/PageState";
-import BookingRequestModal from "@/components/bookings/BookingRequestModal";
+import { useSession } from "@/lib/auth";
+import { advertiserPaths } from "@/lib/cart";
 import CancellationDialog from "@/components/bookings/CancellationDialog";
 
 // Company bookings (GET /bookings, needs BOOKING_VIEW). The price shown is the
@@ -39,7 +41,9 @@ export default function CompanyBookingsPage() {
     const [busyId, setBusyId] = useState(null);
     const [cancelTarget, setCancelTarget] = useState(null);
     const [notice, setNotice] = useState(null);
-    const [requestOpen, setRequestOpen] = useState(false);
+    const [reschedule, setReschedule] = useState(null); // { booking, date }
+    const { user } = useSession();
+    const paths = advertiserPaths(user);
 
     const load = useCallback(async () => {
         setError(null);
@@ -77,15 +81,27 @@ export default function CompanyBookingsPage() {
 
     const loadCancelQuote = useCallback(async () => (await getBookingCancellationQuote(cancelTarget._id))?.data, [cancelTarget]);
 
-    const handleResubmit = async (booking) => {
+    // The station asked to reschedule: pick the new date (its suggestion by default).
+    const openReschedule = (booking) => {
+        const suggested = booking.proposedDate ? String(booking.proposedDate).slice(0, 10) : "";
+        setReschedule({ booking, date: suggested || String(booking.date || "").slice(0, 10), error: "" });
+    };
+
+    const handleResubmit = async (booking, date) => {
         setBusyId(booking._id);
         setNotice(null);
         try {
-            const result = await resubmitBooking(booking._id);
-            setBookings((prev) => prev.map((b) => (b._id === booking._id ? { ...b, status: result?.data?.status || "PENDING" } : b)));
-            setNotice({ type: "success", text: "Sent back to the station." });
+            const current = String(booking.date || "").slice(0, 10);
+            const result = await resubmitBooking(booking._id, { date: date && date !== current ? date : undefined });
+            const moved = date && date !== current;
+            setBookings((prev) => prev.map((b) => (b._id === booking._id
+                ? { ...b, status: result?.data?.status || "PENDING", proposedDate: null, ...(moved ? { date: `${date}T00:00:00.000Z` } : {}) }
+                : b)));
+            setReschedule(null);
+            setNotice({ type: "success", text: moved ? `Moved to ${date} and sent back to the station.` : "Sent back to the station." });
         } catch (err) {
-            setNotice({ type: "error", text: err?.message || "We couldn't resubmit this booking." });
+            if (reschedule) setReschedule((r) => r && { ...r, error: err?.message || "We couldn't reschedule this booking." });
+            else setNotice({ type: "error", text: err?.message || "We couldn't resubmit this booking." });
         } finally {
             setBusyId(null);
         }
@@ -104,9 +120,9 @@ export default function CompanyBookingsPage() {
                     <p className="mt-1 text-slate-500 dark:text-slate-400">Your booking requests and their status with each station.</p>
                 </div>
                 {!error && (
-                    <button type="button" onClick={() => setRequestOpen(true)} className="flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
-                        <Plus className="h-4 w-4" /> Add spots
-                    </button>
+                    <Link href={paths.book} className="flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
+                        <Plus className="h-4 w-4" /> Book airtime
+                    </Link>
                 )}
             </motion.div>
 
@@ -128,11 +144,11 @@ export default function CompanyBookingsPage() {
                 <EmptyState
                     icon={CalendarDays}
                     title="You don't have any bookings yet"
-                    message="Pick stations and times, add them to your cart, and pay once. Stations receive your requests after payment."
+                    message="Tick slots on as many media houses as you like and pay once. Stations receive your requests after payment."
                     action={
-                        <button type="button" onClick={() => setRequestOpen(true)} className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
-                            <Plus className="h-4 w-4" /> Add spots
-                        </button>
+                        <Link href={paths.book} className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
+                            <Plus className="h-4 w-4" /> Book airtime
+                        </Link>
                     }
                 />
             ) : (
@@ -193,8 +209,8 @@ export default function CompanyBookingsPage() {
                                                 </td>
                                                 <td className="px-4 py-3 text-right">
                                                     {booking.status === "CHANGES_REQUESTED" && (
-                                                        <button type="button" onClick={() => handleResubmit(booking)} disabled={busyId === booking._id} className="mr-3 text-xs font-medium text-emerald-600 hover:underline disabled:opacity-50 dark:text-emerald-400">
-                                                            Resubmit
+                                                        <button type="button" onClick={() => openReschedule(booking)} disabled={busyId === booking._id} className="mr-3 text-xs font-medium text-emerald-600 hover:underline disabled:opacity-50 dark:text-emerald-400">
+                                                            Reschedule
                                                         </button>
                                                     )}
                                                     {canCancelBooking(booking.status) && (
@@ -232,8 +248,8 @@ export default function CompanyBookingsPage() {
                                             <div className="flex items-center justify-between">
                                                 <span className="font-mono text-xs text-slate-400">{booking.bookingReference}</span>
                                                 {booking.status === "CHANGES_REQUESTED" && (
-                                                    <button type="button" onClick={() => handleResubmit(booking)} disabled={busyId === booking._id} className="text-xs font-medium text-emerald-600 disabled:opacity-50 dark:text-emerald-400">
-                                                        Resubmit
+                                                    <button type="button" onClick={() => openReschedule(booking)} disabled={busyId === booking._id} className="text-xs font-medium text-emerald-600 disabled:opacity-50 dark:text-emerald-400">
+                                                        Reschedule
                                                     </button>
                                                 )}
                                                 {canCancelBooking(booking.status) && (
@@ -251,7 +267,41 @@ export default function CompanyBookingsPage() {
                 </div>
             )}
 
-            <BookingRequestModal open={requestOpen} onClose={() => setRequestOpen(false)} onCreated={load} />
+            {reschedule && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={() => setReschedule(null)}>
+                    <div role="dialog" aria-modal="true" aria-labelledby="reschedule-title" onClick={(e) => e.stopPropagation()}
+                        className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+                        <div className="mb-4 flex items-start justify-between gap-3">
+                            <div>
+                                <h2 id="reschedule-title" className="text-lg font-semibold text-slate-900 dark:text-white">Reschedule</h2>
+                                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                                    {reschedule.booking.stationId?.name || "The station"} can&apos;t take {reschedule.booking.rateName || "this spot"} on {formatDate(reschedule.booking.date)}.
+                                </p>
+                            </div>
+                            <button type="button" onClick={() => setReschedule(null)} className="rounded-lg p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Close"><X className="h-5 w-5 text-slate-500" /></button>
+                        </div>
+                        {reschedule.booking.stationNote && (
+                            <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">&ldquo;{reschedule.booking.stationNote}&rdquo;</p>
+                        )}
+                        {reschedule.booking.proposedDate && (
+                            <p className="mb-3 text-sm text-slate-600 dark:text-slate-300">Suggested new date: <span className="font-semibold">{formatDate(reschedule.booking.proposedDate)}</span></p>
+                        )}
+                        <label className="block">
+                            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">New date</span>
+                            <input type="date" value={reschedule.date} min={new Date().toISOString().slice(0, 10)} onChange={(e) => setReschedule((r) => ({ ...r, date: e.target.value, error: "" }))}
+                                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white" />
+                        </label>
+                        {reschedule.error && <p role="alert" className="mt-3 text-sm text-red-600 dark:text-red-400">{reschedule.error}</p>}
+                        <div className="mt-5 flex justify-end gap-2">
+                            <button type="button" onClick={() => setReschedule(null)} className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Not now</button>
+                            <button type="button" disabled={!reschedule.date || busyId === reschedule.booking._id} onClick={() => handleResubmit(reschedule.booking, reschedule.date)}
+                                className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-50">
+                                {busyId === reschedule.booking._id && <Loader2 className="h-4 w-4 animate-spin" />} Send to the station
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <CancellationDialog
                 open={!!cancelTarget}

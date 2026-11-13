@@ -18,7 +18,8 @@ import BookingAdvert from "@/components/station/BookingAdvert";
 // Booking requests for the stations the signed-in account operates
 // (GET /bookings/station): a STATION account, or a company linked to a station.
 // Only the actions the backend allows from each status are shown:
-//   PENDING → accept / decline / request changes · ACCEPTED → schedule ·
+//   PENDING → accept / decline / ask to reschedule (with a suggested date) ·
+//   ACCEPTED → schedule ·
 //   SCHEDULED → mark as aired (complete) once the slot has ended.
 
 const FILTERS = [
@@ -43,6 +44,8 @@ const buttonBase = "inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-s
 
 function BookingCard({ booking, busy, onAction }) {
     const [note, setNote] = useState("");
+    const [asking, setAsking] = useState(false);
+    const [proposedDate, setProposedDate] = useState("");
     const aired = spotHasAired(booking);
     const st = bookingStatus(booking.status);
     const pay = PAYMENT_BADGE[booking.paymentStatus || "UNPAID"];
@@ -80,6 +83,11 @@ function BookingCard({ booking, busy, onAction }) {
                     Your note: {booking.stationNote}
                 </p>
             )}
+            {booking.status === "CHANGES_REQUESTED" && (
+                <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+                    Waiting for the advertiser to pick a new date{booking.proposedDate ? ` (you suggested ${formatDate(booking.proposedDate)})` : ""}.
+                </p>
+            )}
 
             {booking.status === "PENDING" && (
                 <div className="mt-4 space-y-3">
@@ -94,13 +102,30 @@ function BookingCard({ booking, busy, onAction }) {
                         <button type="button" disabled={busy} onClick={() => onAction("accept", booking, { note })} className={`${buttonBase} bg-emerald-500 text-white hover:bg-emerald-600`}>
                             <Check className="h-4 w-4" /> Accept
                         </button>
-                        <button type="button" disabled={busy} onClick={() => onAction("changes", booking, { note })} className={`${buttonBase} bg-amber-50 text-amber-800 hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-300`}>
-                            <MessageSquareWarning className="h-4 w-4" /> Request changes
+                        <button type="button" disabled={busy} onClick={() => setAsking((a) => !a)} className={`${buttonBase} bg-amber-50 text-amber-800 hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-300`} aria-expanded={asking}>
+                            <MessageSquareWarning className="h-4 w-4" /> Date taken? Ask to reschedule
                         </button>
                         <button type="button" disabled={busy} onClick={() => onAction("reject", booking, { note })} className={`${buttonBase} bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-500/10 dark:text-red-400`}>
                             <X className="h-4 w-4" /> Decline{booking.paymentStatus === "PAID" ? " (refunds advertiser)" : ""}
                         </button>
                     </div>
+                    {asking && (
+                        <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-500/20 dark:bg-amber-500/5">
+                            <p className="text-sm text-amber-900 dark:text-amber-200">
+                                The advertiser is told {formatDate(booking.date)} isn&apos;t available and picks a new date. Suggest one (optional) and add a note above if it helps.
+                            </p>
+                            <div className="mt-2 flex flex-wrap items-end gap-2">
+                                <label className="block">
+                                    <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">Suggested date</span>
+                                    <input type="date" value={proposedDate} min={new Date().toISOString().slice(0, 10)} onChange={(e) => setProposedDate(e.target.value)}
+                                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white" />
+                                </label>
+                                <button type="button" disabled={busy} onClick={() => onAction("changes", booking, { note, proposedDate })} className={`${buttonBase} bg-amber-500 text-white hover:bg-amber-600`}>
+                                    Send reschedule request
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -167,7 +192,7 @@ export default function StationRequests({ wrapperClassName = "p-4 sm:p-6 lg:p-8"
             const calls = {
                 accept: () => acceptStationBooking(booking._id, note),
                 reject: () => rejectStationBooking(booking._id, note),
-                changes: () => requestStationBookingChanges(booking._id, note),
+                changes: () => requestStationBookingChanges(booking._id, { ...note, ...(extra.proposedDate ? { proposedDate: extra.proposedDate } : {}) }),
                 schedule: () => scheduleStationBooking(booking._id),
                 complete: () => completeStationBooking(booking._id),
             };

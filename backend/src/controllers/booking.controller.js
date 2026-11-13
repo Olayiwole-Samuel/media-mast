@@ -919,10 +919,26 @@ const readNote = (req) => {
     return { ok: true, value: note.trim() || null };
 };
 
-const stationAction = ({ toStatus, auditAction, message, withNote = false, beforeApply }) =>
+// A date the station suggests (YYYY-MM-DD, today or later); undefined when not sent.
+const readProposedDate = (req) => {
+    const raw = req.body?.proposedDate;
+    if (raw === undefined || raw === null || raw === '') return { ok: true, value: undefined };
+    const dateOnly = typeof raw === 'string' ? getDateOnly(raw) : null;
+    if (!dateOnly) return { ok: false, message: 'Suggest the new date as YYYY-MM-DD' };
+    if (dateOnly < new Date().toISOString().slice(0, 10)) return { ok: false, message: 'The suggested date cannot be in the past' };
+    return { ok: true, value: createDateFromDateOnly(dateOnly) };
+};
+
+const stationAction = ({ toStatus, auditAction, message, withNote = false, withProposedDate = false, beforeApply }) =>
     async (req, res) => {
         try {
             const set = {};
+
+            if (withProposedDate) {
+                const proposed = readProposedDate(req);
+                if (!proposed.ok) return res.status(400).json({ success: false, message: proposed.message });
+                set.proposedDate = proposed.value || null;
+            }
 
             if (withNote) {
                 const note = readNote(req);
@@ -984,11 +1000,14 @@ const rejectBooking = stationAction({
     withNote: true,
 });
 
+// "Ask to reschedule": the date is taken (or anything else needs changing);
+// the note explains, and the station may suggest a new date.
 const requestBookingChanges = stationAction({
     toStatus: 'CHANGES_REQUESTED',
     auditAction: 'UPDATE_BOOKING',
-    message: 'Changes requested',
+    message: 'Reschedule requested',
     withNote: true,
+    withProposedDate: true,
 });
 
 const scheduleBooking = stationAction({
@@ -1126,13 +1145,35 @@ const resubmitBooking = async (req, res) => {
             });
         }
 
+        // Rescheduling: the advertiser may move the spot to a new date (often
+        // the one the station suggested). Same rules as booking it fresh.
+        const set = { proposedDate: null };
+        if (req.body?.date !== undefined && req.body.date !== null && req.body.date !== '') {
+            const dateOnly = typeof req.body.date === 'string' ? getDateOnly(req.body.date) : null;
+            if (!dateOnly) return res.status(400).json({ success: false, message: 'Choose the new date as YYYY-MM-DD' });
+            if (dateOnly < new Date().toISOString().slice(0, 10)) {
+                return res.status(400).json({ success: false, message: 'The new date cannot be in the past' });
+            }
+            const campaign = await Campaign.findById(booking.campaignId);
+            const campaignProblem = campaign ? checkCampaignForBooking(campaign, dateOnly) : null;
+            if (campaignProblem) return res.status(400).json({ success: false, message: campaignProblem });
+            const station = await Station.findById(booking.stationId).select('rateCard');
+            const rate = (station?.rateCard || []).find((r) => String(r._id) === String(booking.rateId));
+            if (rate && Array.isArray(rate.days) && rate.days.length
+                && !rate.days.includes(new Date(`${dateOnly}T12:00:00Z`).getUTCDay())) {
+                return res.status(400).json({ success: false, message: `The ${rate.name} rate isn't sold on that day of the week` });
+            }
+            set.date = createDateFromDateOnly(dateOnly);
+        }
+
         return await applyBookingTransition(req, res, {
             booking,
             actor: 'CUSTOMER',
             toStatus: 'PENDING',
+            set,
             auditAction: 'UPDATE_BOOKING',
             auditCompanyId: advertiserOwner(req).companyId,
-            message: 'Booking resubmitted to the station',
+            message: set.date ? 'Booking moved to the new date and sent back to the station' : 'Booking resubmitted to the station',
         });
     } catch (error) {
         console.error('❌ Resubmit booking error:', error.message);

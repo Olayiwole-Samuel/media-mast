@@ -76,6 +76,12 @@ const BookingSchema = new mongoose.Schema(
             default: null,
         },
 
+        // A new date the station suggests when it asks to reschedule.
+        proposedDate: {
+            type: Date,
+            default: null,
+        },
+
         // Spot length bought (seconds, from the rate card: 60/45/30/15).
         spotSeconds: {
             type: Number,

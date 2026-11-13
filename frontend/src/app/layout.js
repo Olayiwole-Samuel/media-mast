@@ -20,7 +20,7 @@ export default function RootLayout({ children }) {
         "/analytics",
         "/subscription",
         "/settings",
-        "/insights",
+        "/book",
         "/company",
         "/admin",
         // A business awaiting approval

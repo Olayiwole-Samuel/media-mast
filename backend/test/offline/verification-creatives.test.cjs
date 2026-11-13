@@ -439,6 +439,16 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
     r = await call(U.indiv, 'GET', `/api/v1/bookings/${b1._id}/creative`);
     check('S4  An advertiser cannot use the station route → 403', r.code === 403, `${r.code}`);
 
+    // ── RS: rescheduling — the station asks for another date; the advertiser moves the spot ──
+    r = await call(U.station, 'PATCH', `/api/v1/bookings/${b2._id}/request-changes`, { note: 'That day is fully booked', proposedDate: D11 });
+    const b2a = db.bookings.find((b) => eq(b._id, b2._id));
+    check('RS1 Station asks to reschedule with a suggested date → CHANGES_REQUESTED, date suggested', r.code === 200 && b2a.status === 'CHANGES_REQUESTED' && b2a.proposedDate && new Date(b2a.proposedDate).toISOString().slice(0, 10) === D11, `${r.code} ${r.body.message}`);
+    r = await call(U.station, 'PATCH', `/api/v1/bookings/${b1._id}/request-changes`, { proposedDate: '2000-01-01' });
+    check('RS2 A suggested date in the past → 400', r.code === 400, `${r.code}`);
+    r = await call(U.indiv, 'PATCH', `/api/v1/bookings/${b2._id}/resubmit`, { date: D11 });
+    const b2b = db.bookings.find((b) => eq(b._id, b2._id));
+    check('RS3 Advertiser resubmits on the new date → PENDING on that date, suggestion cleared', r.code === 200 && b2b.status === 'PENDING' && new Date(b2b.date).toISOString().slice(0, 10) === D11 && !b2b.proposedDate, `${r.code} ${r.body.message}`);
+
     // ── E: Enterprise request (the one plan offered in the dashboard) ──
     r = await call(U.indiv, 'POST', '/api/v1/subscriptions/enterprise-request', { message: 'hi' });
     check('E1  Too short a request → 400', r.code === 400, `${r.code}`);

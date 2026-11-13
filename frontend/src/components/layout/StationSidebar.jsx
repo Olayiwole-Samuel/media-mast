@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Inbox, CalendarDays, CalendarOff, Radio, LogOut, X, ArrowLeft, KeyRound, TrendingUp } from "lucide-react";
+import { LayoutDashboard, Inbox, CalendarDays, CalendarOff, Radio, LogOut, X, ArrowLeft, KeyRound } from "lucide-react";
 import { signOut } from "@/lib/auth";
 
 // Station desk: station managers (their assigned stations) and full admins (every station).
@@ -12,7 +12,6 @@ const NAV_ITEMS = [
     { label: "Schedule", href: "/station/schedule", icon: CalendarDays },
     { label: "Calendar", href: "/station/calendar", icon: CalendarOff },
     { label: "Rates & profile", href: "/station/profile", icon: Radio },
-    { label: "Spend insights", href: "/station/insights", icon: TrendingUp },
     { label: "Change password", href: "/change-password", icon: KeyRound },
 ];
 

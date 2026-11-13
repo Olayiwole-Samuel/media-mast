@@ -1,7 +1,7 @@
 "use client";
 
 import { formatMoney } from "@/lib/status";
-import { daysLabel } from "@/components/bookings/BookingRequestModal";
+import { daysLabel } from "@/lib/rates";
 
 // A station's rate card as the admin sees it: one row per belt or programme,
 // a column per spot length that the card uses (press: one price per placement).

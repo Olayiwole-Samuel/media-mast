@@ -306,7 +306,7 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
     // ── R: changes requested → resubmit goes back to the station ──
     reset();
     r = await call(U.ownerM, 'PATCH', `/api/v1/bookings/${bks[2]._id}/request-changes`, { note: 'Shorter script please' });
-    check('R1  Changes requested → advertiser emailed with the note', r.code === 200 && /needs changes/.test(to('ivy@example.com')[0]?.subject || '') && to('ivy@example.com')[0].text.includes('Shorter script please'), `${r.code} ${r.body.message}`);
+    check('R1  Reschedule requested → advertiser emailed ("needs rescheduling") with the note', r.code === 200 && /needs rescheduling/.test(to('ivy@example.com')[0]?.subject || '') && to('ivy@example.com')[0].text.includes('Shorter script please'), `${r.code} ${r.body.message}`);
     reset();
     r = await call(U.indiv, 'PATCH', `/api/v1/bookings/${bks[2]._id}/resubmit`, {});
     check('R2  Advertiser resubmits → the station (company fallback) is emailed, not the advertiser', r.code === 200 && sent.length === 1 && !!to('media-co@example.com')[0] && /resubmitted/.test(to('media-co@example.com')[0].subject), `${r.code} ${sent.length}`);

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-// Market and platform spend now live on the Spend insights page.
+// The old analytics page now goes to the dashboard.
 export default function Page() {
-    redirect("/insights");
+    redirect("/dashboard");
 }

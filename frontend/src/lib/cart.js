@@ -98,6 +98,6 @@ export const advertiserPaths = (user) => {
         confirmation: `${base}/confirmation`,
         subscription: `${base}/subscription`,
         documents: `${base}/documents`,
-        insights: `${base}/insights`,
+        book: `${base}/book`,
     };
 };

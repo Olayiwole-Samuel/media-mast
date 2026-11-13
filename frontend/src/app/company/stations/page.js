@@ -1,13 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Radio } from "lucide-react";
 import StationCatalogue from "@/components/stations/StationCatalogue";
-import BookingRequestModal from "@/components/bookings/BookingRequestModal";
+import { useSession } from "@/lib/auth";
+import { advertiserPaths } from "@/lib/cart";
 
 export default function CompanyStationsPage() {
-    const [station, setStation] = useState(null);
+    const router = useRouter();
+    const { user } = useSession();
+    const paths = advertiserPaths(user);
+    const book = (station) => router.push(`${paths.book}?station=${encodeURIComponent(station._id)}`);
 
     return (
         <div className="p-4 sm:p-6 lg:p-8">
@@ -21,9 +25,7 @@ export default function CompanyStationsPage() {
                 </p>
             </motion.div>
 
-            <StationCatalogue onRequestBooking={setStation} />
-
-            <BookingRequestModal open={!!station} station={station} onClose={() => setStation(null)} />
+            <StationCatalogue onRequestBooking={book} />
         </div>
     );
 }

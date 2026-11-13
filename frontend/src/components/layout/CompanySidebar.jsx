@@ -9,6 +9,7 @@ import {
     LayoutDashboard,
     CalendarDays,
     Megaphone,
+    CalendarPlus,
     Users,
     BarChart3,
     Settings,
@@ -26,7 +27,6 @@ import {
     KeyRound,
     Gem,
     FolderOpen,
-    TrendingUp,
 } from "lucide-react";
 import { isCompanyOwner, signOut } from "@/lib/auth";
 import { getMyStations } from "@/lib/api";
@@ -37,6 +37,7 @@ import { getMyStations } from "@/lib/api";
 const NAV_ITEMS = [
     { label: "Dashboard", href: "/company/dashboard", icon: LayoutDashboard },
     { label: "Campaigns", href: "/company/campaigns", icon: Megaphone },
+    { label: "Book airtime", href: "/company/book", icon: CalendarPlus },
     { label: "Bookings", href: "/company/bookings", icon: CalendarDays },
     { label: "Stations", href: "/company/stations", icon: Radio },
     { label: "Cart", href: "/company/cart", icon: ShoppingCart },
@@ -46,7 +47,6 @@ const NAV_ITEMS = [
     { label: "Team", href: "/company/team", icon: Users },
     { label: "Departments", href: "/company/departments", icon: Building2 },
     { label: "Analytics", href: "/company/analytics", icon: BarChart3 },
-    { label: "Spend insights", href: "/company/insights", icon: TrendingUp },
     { label: "Documents", href: "/company/documents", icon: FolderOpen },
     { label: "Plan", href: "/company/subscription", icon: Gem },
     { label: "Settings", href: "/company/settings", icon: Settings, ownerOnly: true },

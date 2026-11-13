@@ -136,8 +136,13 @@ const check = (label, ok, detail = '') => { results.push(ok); out(`${ok ? 'PASS'
     check('B2  positive integer → 201', r.code === 201 && r.body.data?.budget === 500000, `${r.code}`);
     r = await create({ budget: 1234.56 });
     check('B3  positive decimal → 201 (schema is a plain Number)', r.code === 201 && r.body.data?.budget === 1234.56, `${r.code}`);
+    // Budget is optional (spend comes from the spots booked): missing or null is accepted.
+    r = await create({});
+    check('B3b budget missing → 201, stored as null (budget is optional)', r.code === 201 && r.body.data?.budget === null, `${r.code} ${r.body.message || ''}`);
+    r = await create({ budget: null });
+    check('B3c budget null → 201, stored as null', r.code === 201 && r.body.data?.budget === null, `${r.code}`);
     const created = db.campaigns.length - n0;
-    for (const [lbl, b, re] of [['missing', undefined, /required/], ['null', null, /required/], ['negative', -1, /cannot be negative/], ['NaN (sent as string)', 'NaN', /must be a number/],
+    for (const [lbl, b, re] of [['negative', -1, /cannot be negative/], ['NaN (sent as string)', 'NaN', /must be a number/],
         ['"Infinity" string', 'Infinity', /must be a number/], ['1e309 (JSON → Infinity)', '__1e309__', /must be a number/], ['"10000" string', '10000', /must be a number/],
         ['object', { $gt: 0 }, /must be a number/], ['array', [100], /must be a number/], ['boolean true', true, /must be a number/], ['boolean false', false, /must be a number/], ['empty string', '', /must be a number/]]) {
         const before = db.campaigns.length;
@@ -148,7 +153,7 @@ const check = (label, ok, detail = '') => { results.push(ok); out(`${ok ? 'PASS'
         } else x = await create(b === undefined ? {} : { budget: b });
         check(`B4  budget ${lbl} → 400 "${(x.body.message || '')}"`, x.code === 400 && re.test(x.body.message || '') && db.campaigns.length === before, `${x.code}`);
     }
-    check('B5  Only the 3 valid creates were stored', created === 3 && db.campaigns.length === n0 + 3);
+    check('B5  Only the 5 valid creates were stored (invalid budgets still refused)', created === 5 && db.campaigns.length === n0 + 5);
     const cid = db.campaigns[db.campaigns.length - 1]._id;
     r = track(await call(U.ownerA, 'PUT', `/api/v1/campaigns/${cid}`, { budget: 0 }));
     check('B6  Update budget → 0 → 200', r.code === 200 && get('campaigns', cid).budget === 0, `${r.code}`);

@@ -50,9 +50,10 @@ const CampaignSchema = new mongoose.Schema({
         ],
         default: 'DRAFT',
     },
+    // Optional: spend is set by the spots booked (rate card prices), not a budget.
     budget: {
         type: Number,
-        required: [true, 'Budget is required'],
+        default: null,
         min: [0, 'Budget cannot be negative'],
     },
     currency: {

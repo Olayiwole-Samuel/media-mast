@@ -9,6 +9,7 @@ import {
     LayoutDashboard,
     Radio,
     Megaphone,
+    CalendarPlus,
     ShoppingCart,
     CalendarDays,
     Settings,
@@ -19,7 +20,6 @@ import {
     Home,
     Gem,
     FolderOpen,
-    TrendingUp,
 } from "lucide-react";
 import { signOut } from "@/lib/auth";
 
@@ -28,11 +28,11 @@ import { signOut } from "@/lib/auth";
 const NAV_ITEMS = [
     { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { label: "Campaigns", href: "/campaigns", icon: Megaphone },
+    { label: "Book airtime", href: "/book", icon: CalendarPlus },
     { label: "Stations", href: "/stations", icon: Radio },
     { label: "Cart", href: "/cart", icon: ShoppingCart },
     { label: "Bookings", href: "/bookings", icon: CalendarDays },
     { label: "Documents", href: "/documents", icon: FolderOpen },
-    { label: "Spend insights", href: "/insights", icon: TrendingUp },
     { label: "My plan", href: "/subscription", icon: Gem },
     { label: "My account", href: "/settings", icon: Settings },
 ];

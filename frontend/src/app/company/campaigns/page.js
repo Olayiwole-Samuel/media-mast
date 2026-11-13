@@ -26,7 +26,9 @@ import {
 } from "@/lib/status";
 import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/PageState";
 import CampaignCreatives from "@/components/creatives/CampaignCreatives";
-import BookingRequestModal from "@/components/bookings/BookingRequestModal";
+import Link from "next/link";
+import { useSession } from "@/lib/auth";
+import { advertiserPaths } from "@/lib/cart";
 import CancellationDialog from "@/components/bookings/CancellationDialog";
 
 // Campaigns for the signed-in company (GET/POST/PUT/DELETE /campaigns,
@@ -39,12 +41,15 @@ const OBJECTIVES = [
     { value: "EVENT_PROMOTION", label: "Event promotion" },
     { value: "SALES", label: "Sales and offers" },
     { value: "PUBLIC_ANNOUNCEMENT", label: "Public announcement" },
+    { value: "OTHER", label: "Other (type it in)" },
 ];
 
+// A purpose typed under "Other" is stored as the text itself.
 const objectiveLabel = (value) =>
-    OBJECTIVES.find((o) => o.value === value)?.label || campaignStatus(value).label;
+    OBJECTIVES.find((o) => o.value === value && o.value !== "OTHER")?.label || value || "—";
+const isListedObjective = (value) => OBJECTIVES.some((o) => o.value === value && o.value !== "OTHER");
 
-const EMPTY_FORM = { name: "", description: "", objective: "BRAND_AWARENESS", budget: "", startDate: "", endDate: "", clientBrand: "" };
+const EMPTY_FORM = { name: "", description: "", objective: "BRAND_AWARENESS", objectiveOther: "", startDate: "", endDate: "", clientBrand: "" };
 
 const toDateInput = (value) => (value ? new Date(value).toISOString().slice(0, 10) : "");
 
@@ -98,7 +103,8 @@ export default function CompanyCampaignsPage() {
 
     const [viewing, setViewing] = useState(null);
     const [viewLoading, setViewLoading] = useState(false);
-    const [bookingFor, setBookingFor] = useState(null);
+    const { user } = useSession();
+    const paths = advertiserPaths(user);
 
     const [confirm, setConfirm] = useState(null); // { campaign, kind: "delete" | "status", status }
     const [confirming, setConfirming] = useState(false);
@@ -135,8 +141,8 @@ export default function CompanyCampaignsPage() {
         setForm({
             name: campaign.name || "",
             description: campaign.description || "",
-            objective: campaign.objective || "BRAND_AWARENESS",
-            budget: campaign.budget ?? "",
+            objective: !campaign.objective || isListedObjective(campaign.objective) ? campaign.objective || "BRAND_AWARENESS" : "OTHER",
+            objectiveOther: campaign.objective && !isListedObjective(campaign.objective) ? campaign.objective : "",
             startDate: toDateInput(campaign.startDate),
             endDate: toDateInput(campaign.endDate),
             clientBrand: campaign.clientBrand || "",
@@ -152,7 +158,8 @@ export default function CompanyCampaignsPage() {
         setFormError("");
 
         if (!form.name.trim()) return setFormError("Please give your campaign a name.");
-        if (!(Number(form.budget) > 0)) return setFormError("Please enter a budget greater than zero.");
+        if (form.objective === "OTHER" && !form.objectiveOther.trim()) return setFormError("Tell us what the campaign is for.");
+        if (!form.startDate) return setFormError("Choose the air date: your spots are booked for this day.");
         if (form.startDate && form.endDate && form.endDate < form.startDate) {
             return setFormError("The end date can't be before the start date.");
         }
@@ -161,8 +168,7 @@ export default function CompanyCampaignsPage() {
         const payload = {
             name: form.name.trim(),
             description: form.description.trim(),
-            objective: form.objective,
-            budget: Number(form.budget),
+            objective: form.objective === "OTHER" ? form.objectiveOther.trim().slice(0, 100) : form.objective,
             startDate: form.startDate || null,
             endDate: form.endDate || null,
             ...(isAgency ? { clientBrand: form.clientBrand.trim() || null } : {}),
@@ -377,8 +383,8 @@ export default function CompanyCampaignsPage() {
 
                                 <div className="mt-5 grid grid-cols-2 gap-3">
                                     <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800">
-                                        <p className="text-xs text-slate-400 dark:text-slate-500">Budget</p>
-                                        <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{formatMoney(campaign.budget, campaign.currency)}</p>
+                                        <p className="text-xs text-slate-400 dark:text-slate-500">For</p>
+                                        <p className="mt-1 truncate text-sm font-semibold text-slate-900 dark:text-white">{objectiveLabel(campaign.objective)}</p>
                                     </div>
                                     <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800">
                                         <p className="text-xs text-slate-400 dark:text-slate-500">Runs</p>
@@ -453,27 +459,28 @@ export default function CompanyCampaignsPage() {
                                     {o.label}
                                 </option>
                             ))}
-                            {!OBJECTIVES.some((o) => o.value === form.objective) && <option value={form.objective}>{objectiveLabel(form.objective)}</option>}
                         </select>
                     </label>
+                    {form.objective === "OTHER" && (
+                        <label className="block">
+                            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">What is the campaign for?</span>
+                            <input type="text" value={form.objectiveOther} onChange={(e) => setForm({ ...form, objectiveOther: e.target.value })} maxLength={100} placeholder="e.g. Store opening in Ikeja" className={inputClass} autoFocus />
+                        </label>
+                    )}
 
                     <label className="block">
                         <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Description</span>
                         <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} placeholder="Tell stations what the campaign is about" className={`${inputClass} resize-none`} />
                     </label>
 
-                    <label className="block">
-                        <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Budget (₦)</span>
-                        <input type="number" min="1" step="1" value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })} placeholder="e.g. 500000" required className={inputClass} />
-                    </label>
-
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <label className="block">
-                            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Start date (optional)</span>
-                            <input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} className={inputClass} />
+                            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Air date</span>
+                            <input type="date" required value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} className={inputClass} />
+                            <span className="mt-1 block text-xs text-slate-400">Your spots are booked for this day; each media house confirms it or suggests another.</span>
                         </label>
                         <label className="block">
-                            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">End date (optional)</span>
+                            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Last day (optional, for a longer run)</span>
                             <input type="date" min={form.startDate || undefined} value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className={inputClass} />
                         </label>
                     </div>
@@ -511,7 +518,6 @@ export default function CompanyCampaignsPage() {
                                 {[
                                     ...(viewing.clientBrand ? [["Client brand", viewing.clientBrand]] : []),
                                     ["Purpose", objectiveLabel(viewing.objective)],
-                                    ["Budget", formatMoney(viewing.budget, viewing.currency)],
                                     ["Start", formatDate(viewing.startDate)],
                                     ["End", formatDate(viewing.endDate)],
                                 ].map(([label, value]) => (
@@ -535,13 +541,12 @@ export default function CompanyCampaignsPage() {
                                     <section>
                                         <div className="mb-3 flex items-center justify-between">
                                             <h3 className="text-xs uppercase tracking-wider text-slate-400">Bookings ({viewing.bookings?.length || 0})</h3>
-                                            <button
-                                                type="button"
-                                                onClick={() => setBookingFor(viewing._id)}
+                                            <Link
+                                                href={`${paths.book}?campaign=${encodeURIComponent(viewing._id)}`}
                                                 className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10"
                                             >
-                                                <CalendarPlus className="h-4 w-4" /> Add spots to cart
-                                            </button>
+                                                <CalendarPlus className="h-4 w-4" /> Book airtime
+                                            </Link>
                                         </div>
                                         {viewing.bookings?.length ? (
                                             <div className="space-y-2">
@@ -652,14 +657,6 @@ export default function CompanyCampaignsPage() {
                 onClose={() => setCancelCampaignTarget(null)}
             />
 
-            <BookingRequestModal
-                open={!!bookingFor}
-                campaignId={bookingFor}
-                onClose={() => setBookingFor(null)}
-                onCreated={async () => {
-                    if (viewing) await openView(viewing);
-                }}
-            />
         </div>
     );
 }

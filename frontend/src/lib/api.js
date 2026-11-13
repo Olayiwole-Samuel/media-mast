@@ -606,9 +606,11 @@ export const cancelBooking = async (id) => {
 };
 
 // Resubmit a booking after the station asked for changes
-export const resubmitBooking = async (id) => {
+// Send a booking back to the station, optionally on a new date (YYYY-MM-DD).
+export const resubmitBooking = async (id, { date } = {}) => {
     return authFetch(`/api/v1/bookings/${id}/resubmit`, {
         method: 'PATCH',
+        ...(date ? { body: JSON.stringify({ date }) } : {}),
     });
 };
 
@@ -869,7 +871,6 @@ export const updateNotificationPreferences = async (prefs) =>
 
 // ── SPEND INSIGHTS ──
 
-export const getSpendInsights = async () => authFetch('/api/v1/insights/spend');
 
 // ── ADMIN: SUBSCRIPTIONS & PLANS ──
 
