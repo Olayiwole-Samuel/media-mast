@@ -44,7 +44,8 @@ const PROVIDERS = { stub: stubProvider };
 // Tests may swap the provider (failure injection); production code never does.
 let override = null;
 
-const getPaymentProvider = () => {
+// Card/gateway provider (subscriptions, and checkout when wallets are off).
+const getCardProvider = () => {
     if (override) return override;
 
     const name = String(process.env.PAYMENT_PROVIDER || 'stub').trim().toLowerCase();
@@ -57,6 +58,21 @@ const getPaymentProvider = () => {
     }
 
     return provider;
+};
+
+// Checkout pays from the advertiser's wallet (utils/wallet.js) unless
+// WALLET_PAYMENTS=false, which falls back to the card provider.
+const getPaymentProvider = () => {
+    if (override) return override;
+    const { walletPaymentsEnabled, walletProvider } = require('./wallet');
+    return walletPaymentsEnabled() ? walletProvider : getCardProvider();
+};
+
+// Refund through whatever took the money: wallet payments go back to the wallet.
+const getRefundProviderFor = (payment) => {
+    if (override) return override;
+    if (payment && payment.provider === 'WALLET') return require('./wallet').walletProvider;
+    return getCardProvider();
 };
 
 const setPaymentProviderForTests = (provider) => {
@@ -83,6 +99,8 @@ const getVatPercent = () => {
 module.exports = {
     getVatPercent,
     getPaymentProvider,
+    getCardProvider,
+    getRefundProviderFor,
     setPaymentProviderForTests,
     generatePaymentReference,
     getPlatformFeePercent,

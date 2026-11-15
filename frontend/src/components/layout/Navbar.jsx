@@ -45,7 +45,7 @@ const getDashboardLinks = (accountType) => {
             return [
                 { label: "Dashboard", href: "/company/dashboard", icon: LayoutDashboard },
                 { label: "Bookings", href: "/company/bookings", icon: CalendarDays },
-                { label: "Team", href: "/company/team", icon: Building2 },
+                { label: "Wallet", href: "/company/wallet", icon: Building2 },
                 { label: "Settings", href: "/company/settings", icon: Settings },
             ];
 

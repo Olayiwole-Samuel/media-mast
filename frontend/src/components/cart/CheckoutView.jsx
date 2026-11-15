@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { CreditCard, Loader2, ShieldCheck, ArrowLeft, FlaskConical } from "lucide-react";
+import { CreditCard, Loader2, ArrowLeft, Wallet as WalletIcon, AlertTriangle } from "lucide-react";
 import { checkout } from "@/lib/api";
 import { useSession } from "@/lib/auth";
 import { useCart, groupByCampaign, advertiserPaths } from "@/lib/cart";
@@ -12,10 +12,11 @@ import { formatMoney } from "@/lib/status";
 import { EmptyState, PageLoading } from "@/components/common/PageState";
 import { CartItemRow, estimateTotal } from "@/components/cart/CartView";
 import { useCheckoutDiscount } from "@/lib/discounts";
+import { useWallet, walletChanged } from "@/lib/wallet";
 
-// Checkout for one campaign's spots: one payment, then every station gets
-// its request. Payments currently run in TEST MODE (stub provider): no
-// money is charged. The server re-prices everything; its total is final.
+// Checkout for one campaign's spots, paid from the advertiser's wallet;
+// then every station gets its request. The server re-prices everything and
+// takes its total from the wallet (never more than the balance).
 
 export default function CheckoutView() {
     const router = useRouter();
@@ -27,6 +28,8 @@ export default function CheckoutView() {
     const [error, setError] = useState("");
     const [needsPlan, setNeedsPlan] = useState(false);
     const discountOptions = useCheckoutDiscount();
+    const { balance } = useWallet();
+    const [short, setShort] = useState(null);
 
     if (!ready) return <PageLoading label="Loading checkout…" />;
 
@@ -51,6 +54,7 @@ export default function CheckoutView() {
     }
 
     const total = estimateTotal(group.items, discountOptions);
+    const shortfall = short ? short.shortfall : balance != null ? Math.max(0, Math.round((total.total - balance) * 100) / 100) : 0;
 
     const handlePay = async () => {
         setError("");
@@ -59,11 +63,13 @@ export default function CheckoutView() {
         try {
             const result = await checkout({ campaignId: group.campaignId, items: group.items });
             cart.clearCampaign(group.campaignId);
+            walletChanged();
             const paymentId = result?.data?.payment?._id;
             router.push(paymentId ? `${paths.confirmation}?payment=${encodeURIComponent(paymentId)}` : paths.bookings);
         } catch (err) {
             const code = err?.data?.code;
             if (code === "SUBSCRIPTION_REQUIRED") setNeedsPlan(true);
+            if (code === "WALLET_INSUFFICIENT") { setShort(err.data.data || null); setError(""); setPaying(false); return; }
             setError(
                 code === "SUBSCRIPTION_REQUIRED" || code === "PLAN_LIMIT"
                     ? err.message
@@ -94,12 +100,19 @@ export default function CheckoutView() {
                 </p>
             </motion.div>
 
-            <div className="mb-4 flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
-                <FlaskConical className="h-5 w-5 shrink-0" />
-                <p>
-                    <span className="font-semibold">Test mode.</span> Online payment isn&apos;t connected yet, so no money is charged. Your booking
-                    requests are still recorded and sent to the stations exactly as they will be with real payments.
+            <div className={`mb-4 flex flex-col gap-3 rounded-xl border p-4 text-sm sm:flex-row sm:items-center sm:justify-between ${shortfall > 0 ? "border-red-200 bg-red-50 text-red-800 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200" : "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200"}`}>
+                <p className="flex items-start gap-2">
+                    {shortfall > 0 ? <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" /> : <WalletIcon className="mt-0.5 h-5 w-5 shrink-0" />}
+                    <span>
+                        Paid from your wallet. Balance <span className="font-semibold">{balance != null ? formatMoney(short ? short.balance : balance, total.currency) : "…"}</span>
+                        {shortfall > 0
+                            ? <>: you&apos;re <span className="font-semibold">{formatMoney(shortfall, total.currency)}</span> short. Fund your wallet to complete this booking.</>
+                            : balance != null ? <> · left after this booking about {formatMoney(balance - total.total, total.currency)}.</> : null}
+                    </span>
                 </p>
+                <Link href={`${paths.wallet}${shortfall > 0 ? `?fund=${Math.ceil(shortfall)}` : ""}`} className={`inline-flex shrink-0 items-center justify-center rounded-lg px-4 py-2 font-medium ${shortfall > 0 ? "bg-red-500 text-white hover:bg-red-600" : "border border-emerald-300 hover:bg-emerald-100 dark:border-emerald-500/30 dark:hover:bg-emerald-500/10"}`}>
+                    Fund wallet
+                </Link>
             </div>
 
             {(needsPlan || (discountOptions.required && discountOptions.hasPlan === false)) && (
@@ -160,14 +173,14 @@ export default function CheckoutView() {
             <button
                 type="button"
                 onClick={handlePay}
-                disabled={paying}
+                disabled={paying || shortfall > 0}
                 className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3.5 text-base font-semibold text-white hover:bg-emerald-600 disabled:opacity-60"
             >
-                {paying ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShieldCheck className="h-5 w-5" />}
-                {paying ? "Processing…" : `Pay ${formatMoney(total.total, total.currency)} (test mode)`}
+                {paying ? <Loader2 className="h-5 w-5 animate-spin" /> : <WalletIcon className="h-5 w-5" />}
+                {paying ? "Processing…" : shortfall > 0 ? "Fund your wallet to pay" : `Pay ${formatMoney(total.total, total.currency)} from wallet`}
             </button>
             <p className="mt-3 text-center text-xs text-slate-400">
-                If a station declines or you cancel before airing, that spot is refunded.
+                If a station declines or you cancel before airing, that spot&apos;s money goes back to your wallet.
             </p>
         </div>
     );

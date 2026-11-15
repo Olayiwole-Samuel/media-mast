@@ -8,7 +8,7 @@ const NotificationSchema = new mongoose.Schema(
             type: String,
             enum: [
                 'BOOKING_REQUEST', 'BOOKING_STATUS', 'BOOKING_CANCELLED', 'PAYMENT_RECEIVED',
-                'SLOT_REMINDER', 'NEW_STATION', 'SUBSCRIPTION', 'ACCOUNT',
+                'SLOT_REMINDER', 'NEW_STATION', 'SUBSCRIPTION', 'ACCOUNT', 'WALLET',
             ],
             required: true,
         },

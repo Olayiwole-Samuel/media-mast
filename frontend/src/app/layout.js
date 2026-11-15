@@ -21,6 +21,7 @@ export default function RootLayout({ children }) {
         "/subscription",
         "/settings",
         "/book",
+        "/wallet",
         "/company",
         "/admin",
         // A business awaiting approval

@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const Company = require('../models/Company');
+const { teamAccountsEnabled, TEAM_DISABLED } = require('../utils/team');
 const Employee = require('../models/Employee');
 const Station = require('../models/Station');
 const Verification = require('../models/Verification');
@@ -338,6 +339,11 @@ const login = async (req, res) => {
         // in to its verification page; everything else stays closed to it.
         const awaitingVerification = user.status === 'PENDING'
             && ['COMPANY', 'STATION'].includes(user.accountType);
+
+        // Team logins are switched off (utils/team.js).
+        if (user.accountType === 'EMPLOYEE' && !teamAccountsEnabled()) {
+            return res.status(403).json(TEAM_DISABLED);
+        }
 
         if (user.status !== 'ACTIVE' && !awaitingVerification) {
             return res.status(403).json({

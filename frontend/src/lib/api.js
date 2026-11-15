@@ -857,6 +857,18 @@ export const rejectAdminVerification = async (id, reason) =>
 
 export const getAdminEnterpriseRequests = async () => authFetch('/api/v1/admin/enterprise-requests');
 export const getAdminAnalytics = async () => authFetch('/api/v1/admin/analytics');
+
+// ── WALLET ── (advertisers pay for airtime from their wallet)
+export const getWallet = async () => authFetch('/api/v1/wallet');
+export const getWalletTransactions = async ({ page = 1, type } = {}) =>
+    authFetch(`/api/v1/wallet/transactions?page=${page}${type ? `&type=${encodeURIComponent(type)}` : ''}`);
+export const fundWallet = async (amount) => authFetch('/api/v1/wallet/fund', { method: 'POST', body: JSON.stringify({ amount }) });
+export const updateWalletSettings = async ({ lowBalanceThreshold }) =>
+    authFetch('/api/v1/wallet/settings', { method: 'PATCH', body: JSON.stringify({ lowBalanceThreshold }) });
+export const getAdminWallets = async () => authFetch('/api/v1/admin/wallets');
+export const getAdminWalletTransactions = async (id) => authFetch(`/api/v1/admin/wallets/${id}/transactions`);
+export const adjustAdminWallet = async (id, { amount, note }) =>
+    authFetch(`/api/v1/admin/wallets/${id}/adjust`, { method: 'POST', body: JSON.stringify({ amount, note }) });
 export const requestEnterprise = async ({ message, phone }) =>
     authFetch('/api/v1/subscriptions/enterprise-request', { method: 'POST', body: JSON.stringify({ message, phone }) });
 

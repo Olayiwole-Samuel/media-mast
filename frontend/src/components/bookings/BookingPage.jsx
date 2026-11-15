@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
     Loader2, ShoppingCart, ShieldCheck, Search, Tv, Radio, Newspaper, Monitor, Image as BillboardIcon,
-    ChevronDown, ChevronUp, CalendarDays, Check, AlertTriangle, MapPin,
+    ChevronDown, ChevronUp, CalendarDays, Check, AlertTriangle, MapPin, Wallet as WalletIcon,
 } from "lucide-react";
 import { getCampaigns, getStations, getCreatives, getStationAvailability } from "@/lib/api";
 import { calendarProblem } from "@/lib/stationCalendar";
@@ -13,6 +13,7 @@ import { formatMoney } from "@/lib/status";
 import { useSession } from "@/lib/auth";
 import { useCart, advertiserPaths, MAX_CART_ITEMS } from "@/lib/cart";
 import { useCheckoutDiscount, discountPercentFor } from "@/lib/discounts";
+import { useWallet } from "@/lib/wallet";
 import { daysLabel, soldOn, fieldsFromRate, groupRates, cardLengths, groupWhen, weekdayOf, slotKey } from "@/lib/rates";
 
 // ─────────────────────────────────────────────────────────────
@@ -321,8 +322,20 @@ export default function BookingPage() {
         const { percent } = discountPercentFor(stationCount, discountOptions);
         const discount = Math.round(subtotal * percent) / 100;
         const vat = Math.round((subtotal - discount) * VAT_PERCENT) / 100;
-        return { count: list.length, stationCount, subtotal, percent, discount, vat, total: subtotal - discount + vat };
-    }, [picked, discountOptions]);
+        // What "Book & pay" will charge: this campaign's spots already in the
+        // cart plus the ones ticked here (one checkout per campaign).
+        const inCartItems = cart.items.filter((i) => i.campaignId === campaignId);
+        const allSubtotal = subtotal + inCartItems.reduce((sum, i) => sum + Number(i.price || 0), 0);
+        const allStations = new Set([...list.map((p) => p.station._id), ...inCartItems.map((i) => i.stationId)]).size;
+        const all = discountPercentFor(allStations, discountOptions);
+        const allDiscount = Math.round(allSubtotal * all.percent) / 100;
+        const checkoutTotal = allSubtotal - allDiscount + Math.round((allSubtotal - allDiscount) * VAT_PERCENT) / 100;
+        return { count: list.length, stationCount, subtotal, percent, discount, vat, total: subtotal - discount + vat, checkoutTotal, inCartCount: inCartItems.length };
+    }, [picked, discountOptions, cart.items, campaignId]);
+
+    // The wallet pays: show what's left, or how much is missing, as they tick.
+    const { balance, wallet } = useWallet();
+    const shortfall = balance != null && summary.count ? Math.max(0, Math.round((summary.checkoutTotal - balance) * 100) / 100) : 0;
 
     const addToCart = (goToCheckout) => {
         setError("");
@@ -528,9 +541,22 @@ export default function BookingPage() {
                                     {` + VAT ${formatMoney(summary.vat, "NGN")}`} · on {airDate}
                                     {summary.stationCount < 3 ? " · 3+ media houses get a discount" : ""}
                                 </p>
+                                {balance != null && (shortfall > 0 ? (
+                                    <p role="alert" className="mt-1 flex flex-wrap items-center gap-1.5 text-xs font-medium text-red-600 dark:text-red-400">
+                                        <AlertTriangle className="h-3.5 w-3.5" /> Your wallet has {formatMoney(balance, "NGN")}: you&apos;re {formatMoney(shortfall, "NGN")} short{summary.inCartCount ? " (including this campaign's cart)" : ""}.
+                                        <Link href={`${paths.wallet}?fund=${Math.ceil(shortfall)}`} className="underline">Fund wallet</Link>
+                                    </p>
+                                ) : (
+                                    <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                                        <WalletIcon className="h-3.5 w-3.5 text-emerald-500" /> Wallet {formatMoney(balance, "NGN")} · left after booking {formatMoney(balance - summary.checkoutTotal, "NGN")}
+                                    </p>
+                                ))}
                             </>
                         ) : (
-                            <p className="text-slate-500 dark:text-slate-400">Nothing ticked yet.{cart.count ? ` ${cart.count} spot${cart.count === 1 ? "" : "s"} already in your cart.` : ""}</p>
+                            <p className="text-slate-500 dark:text-slate-400">
+                                Nothing ticked yet.{cart.count ? ` ${cart.count} spot${cart.count === 1 ? "" : "s"} already in your cart.` : ""}
+                                {balance != null && <span className={`ml-1 ${wallet?.isLow ? "text-red-600 dark:text-red-400" : ""}`}>Wallet: {formatMoney(balance, "NGN")}.</span>}
+                            </p>
                         )}
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -543,10 +569,16 @@ export default function BookingPage() {
                             className="rounded-lg border border-emerald-500 px-4 py-2.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-emerald-300 dark:hover:bg-emerald-500/10">
                             Add to cart
                         </button>
-                        <button type="button" disabled={!summary.count} onClick={() => addToCart(true)}
-                            className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40">
-                            <ShoppingCart className="h-4 w-4" /> Book &amp; pay
-                        </button>
+                        {shortfall > 0 ? (
+                            <Link href={`${paths.wallet}?fund=${Math.ceil(shortfall)}`} className="inline-flex items-center gap-2 rounded-lg bg-red-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-red-600">
+                                <WalletIcon className="h-4 w-4" /> Fund wallet to book
+                            </Link>
+                        ) : (
+                            <button type="button" disabled={!summary.count} onClick={() => addToCart(true)}
+                                className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40">
+                                <WalletIcon className="h-4 w-4" /> Book &amp; pay from wallet
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>

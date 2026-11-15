@@ -395,8 +395,40 @@ const resolveNotifications = async (ref) => {
     }
 };
 
+// ── Wallet ──
+const walletPath = (user) => (user && user.accountType === 'INDIVIDUAL' ? '/wallet' : '/company/wallet');
+
+// The balance fell below the owner's alert line after a booking.
+const notifyWalletLow = safely('wallet low', async (wallet, payer) => {
+    const user = await User.findById(idOf(payer && payer.userId)).select('email name status accountType');
+    if (!user) return false;
+    const { text, html } = renderEmail({
+        heading: 'Your wallet is running low',
+        paragraphs: [
+            `Your wallet balance is now ${money(wallet.balance, wallet.currency)}, below the ${money(wallet.lowBalanceThreshold, wallet.currency)} alert you set.`,
+            'Fund your wallet so your next bookings go through.',
+        ],
+        action: { label: 'Fund wallet', url: appUrl(walletPath(user)) },
+    });
+    await sendEmail({ to: user.email, subject: 'Your Media Masters wallet is running low', text, html });
+    await pushInApp([user], { type: 'WALLET', title: 'Wallet running low', body: `Balance ${money(wallet.balance, wallet.currency)}`, link: walletPath(user) });
+    return true;
+});
+
+// Money added to the wallet (top-up, refund or admin adjustment).
+const notifyWalletCredited = safely('wallet credited', async (wallet, { userId, amount, type, note }) => {
+    const user = await User.findById(idOf(userId)).select('email name status accountType');
+    if (!user) return false;
+    const what = type === 'FUND' ? 'Wallet funded' : type === 'REFUND' ? 'Refund added to your wallet' : 'Wallet adjusted';
+    const body = `${amount >= 0 ? '+' : '−'}${money(Math.abs(amount), wallet.currency)} · balance ${money(wallet.balance, wallet.currency)}${note ? ` · ${note}` : ''}`;
+    await pushInApp([user], { type: 'WALLET', title: what, body, link: walletPath(user) });
+    return true;
+});
+
 module.exports = {
     resolveNotifications,
+    notifyWalletLow,
+    notifyWalletCredited,
     notifyVerificationSubmitted,
     notifyVerificationDecision,
     notifyCheckout,

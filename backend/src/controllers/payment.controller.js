@@ -48,6 +48,8 @@ const {
 } = bookingHelpers;
 
 const round2 = (n) => Math.round(n * 100) / 100;
+const formatNaira = (n) => `₦${Number(n || 0).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
+const { walletPaymentsEnabled } = require('../utils/wallet');
 
 // A rate-card slot (belt, programme or placement) regardless of spot length:
 // the 60s, 45s, 30s… rates of "Run of spot 05:00–16:00" share one key.
@@ -123,6 +125,11 @@ const checkout = async (req, res) => {
 
     const { campaignId, items } = check.value;
     const owner = advertiserOwner(req);
+
+    // Only the account owner spends the wallet (company owner or individual).
+    if (walletPaymentsEnabled() && req.user.accountType === 'EMPLOYEE') {
+        return res.status(403).json({ success: false, code: 'OWNER_ONLY', message: 'Only the account owner can book and pay from the wallet.' });
+    }
     const itemError = (index, message) =>
         sendValidationErrors(res, [fieldError(`items.${index}`, `Item ${index + 1}: ${message}`)]);
 
@@ -347,9 +354,20 @@ const checkout = async (req, res) => {
 
         if (!lockedOut && !conflict) {
             const reference = generatePaymentReference();
-            charged = await provider.charge({ amount, currency, reference });
+            charged = await provider.charge({ amount, currency, reference, payer: owner, campaignId: campaign._id, actorId: req.user._id });
             chargedAmount = amount;
             chargedCurrency = currency;
+
+            if (charged && charged.status === 'INSUFFICIENT_FUNDS') {
+                const short = charged;
+                charged = null;
+                return res.status(402).json({
+                    success: false,
+                    code: 'WALLET_INSUFFICIENT',
+                    message: `Your wallet has ${formatNaira(short.balance)} but this booking costs ${formatNaira(short.needed)}. Fund your wallet with at least ${formatNaira(short.shortfall)} to continue. You have not been charged.`,
+                    data: { balance: short.balance, needed: short.needed, shortfall: short.shortfall, currency: short.currency },
+                });
+            }
 
             if (!charged || charged.status !== 'SUCCESSFUL') {
                 charged = null;
@@ -441,7 +459,7 @@ const checkout = async (req, res) => {
         // Nothing was written; give back anything already charged.
         if (charged && !result) {
             try {
-                await provider.refund({ amount: chargedAmount, currency: chargedCurrency, providerReference: charged.providerReference, reason: 'Checkout could not be completed' });
+                await provider.refund({ amount: chargedAmount, currency: chargedCurrency, providerReference: charged.providerReference, payer: owner, reason: 'Checkout could not be completed' });
             } catch (refundError) {
                 console.error('❌ Checkout compensation refund failed:', refundError.name, refundError.message);
             }
@@ -534,6 +552,7 @@ const checkout = async (req, res) => {
             bookings,
             campaign: { _id: payment.campaignId, status: campaignStatus },
             testMode: provider.isTestMode === true,
+            walletBalance: charged && charged.walletBalance !== undefined ? charged.walletBalance : null,
         },
     });
 };

@@ -34,7 +34,7 @@ router.post('/register', registerLimiter, validateRegister, register);
 router.post('/login', loginLimiter, validateLogin, login);
 router.post('/forgot-password', forgotPasswordLimiter, validateForgotPassword, forgotPassword);
 router.post('/reset-password', resetPasswordLimiter, validateResetPassword, resetPassword);
-router.post('/invite/accept', acceptInviteLimiter, validateAcceptInvite, acceptInvite);
+router.post('/invite/accept', require('../../utils/team').requireTeamEnabled, acceptInviteLimiter, validateAcceptInvite, acceptInvite);
 
 // ── Protected Routes ──
 // Also open to a business awaiting verification (its only other routes are

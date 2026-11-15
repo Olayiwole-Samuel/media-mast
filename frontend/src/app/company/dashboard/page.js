@@ -8,6 +8,7 @@ import { getCompanyDashboard } from "@/lib/api";
 import { useSession, isCompanyOwner } from "@/lib/auth";
 import { campaignStatus, bookingStatus, formatMoney, formatDate } from "@/lib/status";
 import { PageLoading, PageError } from "@/components/common/PageState";
+import WalletCard from "@/components/wallet/WalletCard";
 
 // Company dashboard: everything shown comes from GET /company/dashboard
 // (needs ANALYTICS_VIEW; owners have it through ALL_ACCESS).
@@ -102,7 +103,7 @@ export default function CompanyDashboardPage() {
                 </h1>
                 <p className="text-[14px] text-slate-500 dark:text-slate-400">
                     {data?.company?.name ? `${data.company.name} · ` : ""}
-                    {isCompanyOwner(user) ? "Company owner" : "Team member"}
+                    Company owner
                 </p>
             </div>
         </motion.header>
@@ -139,10 +140,11 @@ export default function CompanyDashboardPage() {
             <div className="w-full space-y-6 p-4 sm:p-6 lg:p-8">
                 {header}
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <WalletCard />
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <StatCard label="Total spend" value={formatMoney(stats.totalSpend || 0)} icon={CreditCard} tone="bg-emerald-50 text-emerald-500 dark:bg-emerald-500/10" />
                     <StatCard label="Live campaigns" value={stats.activeCampaigns || 0} icon={TrendingUp} tone="bg-blue-50 text-blue-500 dark:bg-blue-500/10" />
-                    <StatCard label="Team members" value={stats.employeeCount || 0} icon={Users} tone="bg-purple-50 text-purple-500 dark:bg-purple-500/10" />
                     <StatCard label="Waiting for stations" value={stats.pendingBookings || 0} icon={Calendar} tone="bg-orange-50 text-orange-500 dark:bg-orange-500/10" />
                 </div>
 

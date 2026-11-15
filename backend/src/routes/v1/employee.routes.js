@@ -14,7 +14,11 @@ const {
 } = require('../../middleware/role');
 const { objectIdParam } = require('../../utils/objectId');
 
+const { requireTeamEnabled } = require('../../utils/team');
 const router = express.Router();
+
+// Team accounts are switched off (utils/team.js).
+router.use(requireTeamEnabled);
 
 // ── All routes require authentication and company access ──
 router.use(protect);

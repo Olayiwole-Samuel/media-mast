@@ -8,7 +8,7 @@ const uploads = require('../utils/fileUploads');
 const Payment = require('../models/Payment');
 const AuditLog = require('../models/AuditLog');
 const { advertiserScope, advertiserOwner } = require('../utils/advertiser');
-const { getPaymentProvider } = require('../utils/payments');
+const { getRefundProviderFor } = require('../utils/payments');
 const { stationOwnerFilter, ownsStation } = require('../utils/stationOperator');
 const { checkStationCalendar } = require('../utils/stationCalendar');
 const { quoteCancellation, paidValueOf, airTimeOf, canStillCancel, CANCEL_CUTOFF_HOURS } = require('../utils/cancellationPolicy');
@@ -396,7 +396,7 @@ const recordBookingRefund = async (req, booking, reason) => {
         const payment = await Payment.findById(booking.paymentId);
         if (!payment) return;
 
-        const result = await getPaymentProvider().refund({ payment, amount, reason });
+        const result = await getRefundProviderFor(payment).refund({ payment, amount, reason });
 
         const updated = await Payment.findOneAndUpdate(
             { _id: payment._id },

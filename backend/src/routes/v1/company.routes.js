@@ -18,6 +18,7 @@ const {
 const { objectIdParam } = require('../../utils/objectId');
 const { getWorkspace } = require('../../controllers/workspace.controller');
 
+const { requireTeamEnabled } = require('../../utils/team');
 const router = express.Router();
 
 // ─────────────────────────────────────────────
@@ -52,24 +53,28 @@ router.get(
 // Colleague names, emails and permissions.
 router.get(
     '/team',
+    requireTeamEnabled,
     requirePermission('TEAM_VIEW'),
     getTeam
 );
 
 router.post(
     '/team/invite',
+    requireTeamEnabled,
     requireCompanyOwner,
     inviteTeamMember
 );
 
 router.delete(
     '/team/:id',
+    requireTeamEnabled,
     requireCompanyOwner,
     removeTeamMember
 );
 
 router.put(
     '/team/:id',
+    requireTeamEnabled,
     requireCompanyOwner,
     updateTeamMemberRole
 );

@@ -23,6 +23,7 @@ import {
     Building2,
     Radio,
     ShoppingCart,
+    Wallet,
     Inbox,
     KeyRound,
     Gem,
@@ -41,11 +42,10 @@ const NAV_ITEMS = [
     { label: "Bookings", href: "/company/bookings", icon: CalendarDays },
     { label: "Stations", href: "/company/stations", icon: Radio },
     { label: "Cart", href: "/company/cart", icon: ShoppingCart },
+    { label: "Wallet", href: "/company/wallet", icon: Wallet },
     // Transition only: shown while this company still runs a station itself
     // (stations are normally run by admin-created station managers).
     { label: "Station requests", href: "/company/station-requests", icon: Inbox, stationOperatorOnly: true },
-    { label: "Team", href: "/company/team", icon: Users },
-    { label: "Departments", href: "/company/departments", icon: Building2 },
     { label: "Analytics", href: "/company/analytics", icon: BarChart3 },
     { label: "Documents", href: "/company/documents", icon: FolderOpen },
     { label: "Plan", href: "/company/subscription", icon: Gem },
@@ -55,9 +55,9 @@ const NAV_ITEMS = [
 
 const QUICK_ACTIONS = [
     {
-        label: "Invite team member",
-        href: "/company/team",
-        icon: UserPlus,
+        label: "Fund wallet",
+        href: "/company/wallet",
+        icon: Wallet,
         color: "text-emerald-500 bg-emerald-500/10 border-emerald-500/20",
         ownerOnly: true,
     },

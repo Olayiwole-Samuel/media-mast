@@ -19,7 +19,10 @@ for (const file of files) {
         cwd: BACKEND,
         encoding: 'utf8',
         timeout: 180000,
-        env: { ...process.env, MM_RUN_TXN_INTEGRATION: '' }, // never forwarded to offline suites
+        // Suites written before wallets and the team switch-off still cover the
+        // card-provider checkout and team accounts (both kept behind settings);
+        // wallet.test.cjs sets WALLET_PAYMENTS / TEAM_ACCOUNTS_ENABLED itself.
+        env: { ...process.env, MM_RUN_TXN_INTEGRATION: '', WALLET_PAYMENTS: 'false', TEAM_ACCOUNTS_ENABLED: 'true' }, // never forwarded to offline suites
     });
     const output = `${run.stdout || ''}\n${run.stderr || ''}`;
     // Each suite ends with a line like "N/M passed" (some prefix it, e.g. "N9: 75/75 passed").

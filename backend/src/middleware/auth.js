@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { teamAccountsEnabled, TEAM_DISABLED } = require('../utils/team');
 
 // A business that has signed up but is not yet approved (status PENDING)
 // may use only the routes that take protectAllowPending: its profile,
@@ -91,6 +92,11 @@ const authenticate = ({ allowPending = false } = {}) => async (req, res, next) =
                 success: false,
                 message,
             });
+        }
+
+        // Team logins are switched off: staff accounts can't use the app.
+        if (user.accountType === 'EMPLOYEE' && !teamAccountsEnabled()) {
+            return res.status(403).json(TEAM_DISABLED);
         }
 
         // ─────────────────────────────────────────────

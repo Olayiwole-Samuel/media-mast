@@ -6,7 +6,7 @@ const Campaign = require('../models/Campaign');
 const User = require('../models/User');
 const Company = require('../models/Company');
 const AuditLog = require('../models/AuditLog');
-const { getPaymentProvider, generatePaymentReference } = require('../utils/payments');
+const { getCardProvider: getPaymentProvider, generatePaymentReference } = require('../utils/payments');
 const { getDiscountTiers } = require('../utils/discounts');
 const { advertiserScope } = require('../utils/advertiser');
 const {

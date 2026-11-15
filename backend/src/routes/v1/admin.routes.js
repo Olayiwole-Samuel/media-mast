@@ -346,6 +346,12 @@ const {
 router.get('/subscriptions', getAdminSubscriptions);
 router.get('/enterprise-requests', getEnterpriseRequests);
 router.get('/analytics', require('../../controllers/analytics.controller').getAnalytics);
+
+// Advertiser wallets: balances, history, manual adjustments (e.g. bank transfers).
+const walletAdmin = require('../../controllers/wallet.controller');
+router.get('/wallets', walletAdmin.getAdminWallets);
+router.get('/wallets/:id/transactions', walletAdmin.getAdminWalletTransactions);
+router.post('/wallets/:id/adjust', walletAdmin.adjustWallet);
 router.post('/subscriptions', assignSubscription);
 router.get('/plans', getAdminPlans);
 router.put('/plans/:code', updatePlan);

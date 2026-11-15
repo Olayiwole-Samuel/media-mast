@@ -28,7 +28,7 @@ import {
     Inbox,
     KeyRound,
     Gem,
-    ShieldCheck,
+    ShieldCheck, Wallet
 } from "lucide-react";
 import { signOut } from "@/lib/auth";
 import { getAdminVerifications } from "@/lib/api";
@@ -46,6 +46,7 @@ const NAV_ITEMS = [
     { label: "Campaigns", href: "/admin/campaigns", icon: Megaphone },
     { label: "Bookings", href: "/admin/bookings", icon: CalendarDays },
     { label: "Payments", href: "/admin/payments", icon: CreditCard },
+    { label: "Wallets", href: "/admin/wallets", icon: Wallet },
     { label: "Subscriptions", href: "/admin/subscriptions", icon: Gem },
     { label: "Analytics", href: "/admin/analytics", icon: BarChart3 },
     { label: "Recent activity", href: "/admin/audit", icon: FileText },
