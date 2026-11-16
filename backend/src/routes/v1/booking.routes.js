@@ -15,6 +15,10 @@ const {
     scheduleBooking,
     uploadBookingProof,
     completeBooking,
+    markNotAired,
+    confirmAired,
+    disputeBooking,
+    getBookingProof,
 } = require('../../controllers/booking.controller');
 
 const { protect } = require('../../middleware/auth');
@@ -107,6 +111,13 @@ router.patch('/:id/request-changes', requireStationOperator('BOOKING_APPROVE'), 
 router.patch('/:id/schedule', requireStationOperator('BOOKING_APPROVE'), scheduleBooking);
 router.patch('/:id/proof', requireStationOperator('BOOKING_APPROVE'), uploadBookingProof);
 router.patch('/:id/complete', requireStationOperator('BOOKING_APPROVE'), completeBooking);
+// The media house could not air it: the advertiser is refunded in full.
+router.patch('/:id/not-aired', requireStationOperator('BOOKING_APPROVE'), markNotAired);
+// Proof of airing (TX log / clip): the advertiser, the media house or an admin.
+router.get('/:id/proof', getBookingProof);
+// Advertiser, after a spot is marked aired: pay now, or dispute it.
+router.post('/:id/confirm-aired', requireAdvertiser, requirePermission('BOOKING_CREATE'), confirmAired);
+router.post('/:id/dispute', requireAdvertiser, requirePermission('BOOKING_CREATE'), disputeBooking);
 
 // ─────────────────────────────────────────────
 // CUSTOMER: RESUBMIT AFTER REQUESTED CHANGES

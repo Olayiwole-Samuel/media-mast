@@ -661,6 +661,29 @@ export const requestStationBookingChanges = stationBookingAction('request-change
 export const scheduleStationBooking = stationBookingAction('schedule');
 export const completeStationBooking = stationBookingAction('complete');
 export const uploadStationBookingProof = (id, proofUrl) => stationBookingAction('proof')(id, { proofUrl });
+// Mark aired with proof (wallet bookings need the TX log and a clip, as upload ids).
+export const markStationBookingAired = (id, { logUploadId, clipUploadId, note } = {}) =>
+    stationBookingAction('complete')(id, { logUploadId, clipUploadId, note });
+export const markStationBookingNotAired = (id, note) => stationBookingAction('not-aired')(id, { note });
+
+// ── MONEY HELD UNTIL A SPOT AIRS ──
+export const bookingProofPath = (id, which) => `/api/v1/bookings/${id}/proof?which=${which === 'clip' ? 'clip' : 'log'}`;
+export const confirmBookingAired = async (id) => authFetch(`/api/v1/bookings/${id}/confirm-aired`, { method: 'POST', body: JSON.stringify({}) });
+export const disputeBooking = async (id, { reason, details }) =>
+    authFetch(`/api/v1/bookings/${id}/dispute`, { method: 'POST', body: JSON.stringify({ reason, details }) });
+export const getStationEarnings = async () => authFetch('/api/v1/station-portal/earnings');
+export const setStationPayoutAccount = async (stationId, account) =>
+    authFetch(`/api/v1/station-portal/stations/${stationId}/payout-account`, { method: 'PUT', body: JSON.stringify(account) });
+export const requestStationPayout = async (stationId, amount) =>
+    authFetch(`/api/v1/station-portal/stations/${stationId}/payouts`, { method: 'POST', body: JSON.stringify({ amount }) });
+export const getAdminDisputes = async (status) => authFetch(`/api/v1/admin/disputes${status ? `?status=${status}` : ''}`);
+export const resolveAdminDispute = async (id, { outcome, refundAmount, resolution }) =>
+    authFetch(`/api/v1/admin/bookings/${id}/resolve-dispute`, { method: 'POST', body: JSON.stringify({ outcome, refundAmount, resolution }) });
+export const getAdminPayouts = async (status) => authFetch(`/api/v1/admin/payouts${status ? `?status=${status}` : ''}`);
+export const markAdminPayoutPaid = async (id, reference) => authFetch(`/api/v1/admin/payouts/${id}/paid`, { method: 'POST', body: JSON.stringify({ reference }) });
+export const declineAdminPayout = async (id, note) => authFetch(`/api/v1/admin/payouts/${id}/decline`, { method: 'POST', body: JSON.stringify({ note }) });
+export const getSettlementSettings = async () => authFetch('/api/v1/admin/settlement-settings');
+export const updateSettlementSettings = async (values) => authFetch('/api/v1/admin/settlement-settings', { method: 'PATCH', body: JSON.stringify(values) });
 
 // ── STATION PORTAL APIS (a station's own account) ──
 

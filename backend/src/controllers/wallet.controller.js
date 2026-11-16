@@ -26,6 +26,8 @@ const publicWallet = (w) => ({
     _id: w._id,
     currency: w.currency || 'NGN',
     balance: round2(w.balance || 0),
+    // Paid for booked spots that haven't aired yet: reserved, not spent.
+    held: round2(w.held || 0),
     totalFunded: round2(w.totalFunded || 0),
     totalSpent: round2(w.totalSpent || 0),
     totalRefunded: round2(w.totalRefunded || 0),
@@ -62,17 +64,27 @@ const getMyWallet = async (req, res) => {
         const sorted = [...all].sort(newestFirst);
         const names = await campaignNamesFor(sorted);
 
+        // Per campaign: booked (held at checkout), spent (aired, paid to the
+        // media house), refunded, and what is still on hold.
         const perCampaign = new Map();
         for (const t of sorted) {
-            if (!t.campaignId || !['CHARGE', 'REFUND'].includes(t.type)) continue;
+            if (!t.campaignId || !['HOLD', 'CHARGE', 'REFUND'].includes(t.type)) continue;
             const key = String(t.campaignId);
-            if (!perCampaign.has(key)) perCampaign.set(key, { campaignId: t.campaignId, campaignName: names.get(key) || 'Campaign', spent: 0, refunded: 0 });
+            if (!perCampaign.has(key)) perCampaign.set(key, { campaignId: t.campaignId, campaignName: names.get(key) || 'Campaign', booked: 0, spent: 0, refunded: 0 });
             const row = perCampaign.get(key);
-            if (t.type === 'CHARGE') row.spent += t.amount; else row.refunded += t.amount;
+            if (t.type === 'HOLD') row.booked += t.amount;
+            else if (t.type === 'CHARGE') row.spent += t.amount;
+            else row.refunded += t.amount;
         }
         const byCampaign = [...perCampaign.values()]
-            .map((r) => ({ ...r, spent: round2(r.spent), refunded: round2(r.refunded), net: round2(r.spent - r.refunded) }))
-            .sort((a, b) => b.net - a.net);
+            .map((r) => ({
+                ...r,
+                booked: round2(r.booked),
+                spent: round2(r.spent),
+                refunded: round2(r.refunded),
+                onHold: round2(Math.max(0, r.booked - r.spent - r.refunded)),
+            }))
+            .sort((a, b) => b.booked - a.booked);
 
         return res.json({
             success: true,
@@ -93,7 +105,7 @@ const getMyWallet = async (req, res) => {
 const getMyTransactions = async (req, res) => {
     try {
         const wallet = await getOrCreateWallet(advertiserOwner(req));
-        const type = ['FUND', 'CHARGE', 'REFUND', 'ADJUSTMENT'].includes(req.query.type) ? req.query.type : null;
+        const type = ['FUND', 'HOLD', 'CHARGE', 'REFUND', 'ADJUSTMENT'].includes(req.query.type) ? req.query.type : null;
         const page = Math.max(1, parseInt(req.query.page, 10) || 1);
         const limit = 25;
         const all = (await WalletTransaction.find({ walletId: wallet._id, ...(type ? { type } : {}) }))

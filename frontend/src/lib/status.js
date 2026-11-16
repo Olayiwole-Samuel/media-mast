@@ -44,9 +44,28 @@ const BOOKING_STATUS = {
     REJECTED: { label: "Declined", tone: "danger" },
     CHANGES_REQUESTED: { label: "Changes requested", tone: "warning" },
     SCHEDULED: { label: "Scheduled", tone: "info" },
-    COMPLETED: { label: "Completed", tone: "success" },
+    COMPLETED: { label: "Aired", tone: "success" },
     CANCELLED: { label: "Cancelled", tone: "neutral" },
+    NOT_AIRED: { label: "Not aired (refunded)", tone: "danger" },
 };
+
+// Where the money for a wallet booking is (see backend utils/escrow.js).
+export const ESCROW_STATUS = {
+    HELD: { label: "On hold until it airs", tone: "info" },
+    AIRED: { label: "Aired: check and confirm", tone: "warning" },
+    DISPUTED: { label: "Disputed: under review", tone: "danger" },
+    RELEASED: { label: "Paid to the media house", tone: "success" },
+    REFUNDED: { label: "Refunded to your wallet", tone: "neutral" },
+    SPLIT: { label: "Part refunded", tone: "neutral" },
+};
+
+export const DISPUTE_REASONS = [
+    { value: "NOT_AIRED", label: "It did not air" },
+    { value: "WRONG_ADVERT", label: "The wrong advert aired" },
+    { value: "WRONG_TIME", label: "Wrong time or programme" },
+    { value: "CUT_SHORT", label: "It was cut short" },
+    { value: "OTHER", label: "Something else" },
+];
 
 const CREATIVE_STATUS = {
     PENDING: { label: "Waiting for approval", tone: "warning" },

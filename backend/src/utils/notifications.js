@@ -163,6 +163,7 @@ const STATUS_COPY = {
     CHANGES_REQUESTED: { subject: 'needs rescheduling', line: 'The station cannot take your spot as booked (for example, that date is already taken). Pick a new date and resubmit it from your bookings.' },
     SCHEDULED: { subject: 'scheduled', line: 'Your spot is scheduled to air.' },
     COMPLETED: { subject: 'aired', line: 'The station has confirmed your spot has aired.' },
+    NOT_AIRED: { subject: 'not aired', line: 'The station could not air your spot. Its full cost is back in your wallet; you can book again.' },
     CANCELLED: { subject: 'cancelled', line: 'The station has cancelled your booking.' },
 };
 
@@ -170,6 +171,13 @@ const refundLine = (booking) =>
     booking.paymentStatus === 'REFUNDED' && Number(booking.refundAmount) > 0
         ? `${money(booking.refundAmount, booking.currency)} has been refunded to you.`
         : null;
+
+// The money for an aired spot is paid to the station at releaseAt unless disputed.
+const airedWindowLine = (booking) => {
+    const at = booking.escrow?.releaseAt ? new Date(booking.escrow.releaseAt) : null;
+    const when = at ? at.toLocaleString('en-GB', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'soon';
+    return `Check the TX log and clip on your bookings page. If something is wrong, raise a dispute before ${when}; otherwise the payment is released to the station automatically.`;
+};
 
 const notifyBookingStatus = safely('booking status', async (booking, { actor, toStatus }) => {
     if (actor === 'CUSTOMER') {
@@ -199,6 +207,7 @@ const notifyBookingStatus = safely('booking status', async (booking, { actor, to
             ...(booking.stationNote ? [`Note from the station: ${booking.stationNote}`] : []),
             ...(booking.proposedDate ? [`The station suggests: ${new Date(booking.proposedDate).toDateString()}`] : []),
             ...(booking.proofUrl && toStatus === 'COMPLETED' ? [`Broadcast proof: ${booking.proofUrl}`] : []),
+            ...(toStatus === 'COMPLETED' && booking.escrow?.status === 'AIRED' ? [airedWindowLine(booking)] : []),
             ...[refundLine(booking)].filter(Boolean),
         ],
         action: { label: 'View booking', url: appUrl(bookingsPath(user)) },
@@ -207,7 +216,7 @@ const notifyBookingStatus = safely('booking status', async (booking, { actor, to
     await pushInApp([user], {
         type: 'BOOKING_STATUS',
         title: `${station ? station.name : 'Station'}: booking ${copy.subject}`,
-        body: [spotWhen(booking), booking.stationNote ? `Note: ${booking.stationNote}` : null, booking.proposedDate ? `Suggested date: ${new Date(booking.proposedDate).toDateString()}` : null, refundLine(booking)].filter(Boolean).join(' · '),
+        body: [spotWhen(booking), toStatus === 'COMPLETED' && booking.escrow?.status === 'AIRED' ? airedWindowLine(booking) : null, booking.stationNote ? `Note: ${booking.stationNote}` : null, booking.proposedDate ? `Suggested date: ${new Date(booking.proposedDate).toDateString()}` : null, refundLine(booking)].filter(Boolean).join(' · '),
         link: bookingsPath(user),
     });
     return true;
@@ -395,6 +404,91 @@ const resolveNotifications = async (ref) => {
     }
 };
 
+// ── Money held until airing: disputes, earnings, overdue confirmations, payouts ──
+const adminUsers = () => User.find({ accountType: 'ADMIN', status: 'ACTIVE' }).select('_id email');
+const REASON_TEXT = {
+    NOT_AIRED: 'it did not air', WRONG_ADVERT: 'the wrong advert aired', WRONG_TIME: 'it aired at the wrong time or programme',
+    CUT_SHORT: 'it was cut short', OTHER: 'something else went wrong',
+};
+
+const notifyDisputeOpened = safely('dispute opened', async (booking, { reason, details }) => {
+    const [admins, { station, users, emails }] = await Promise.all([adminUsers(), stationContacts(booking.stationId)]);
+    const name = station ? station.name : 'the station';
+    const line = `The advertiser says ${REASON_TEXT[reason] || 'something went wrong'}: "${String(details).slice(0, 300)}"`;
+    await pushInApp(admins, { type: 'BOOKING_STATUS', title: `Dispute: ${booking.bookingReference} (${name})`, body: line, link: '/admin/settlement', ref: `dispute:${booking._id}` });
+    await pushInApp(users, { type: 'BOOKING_STATUS', title: `Spot ${booking.bookingReference} disputed`, body: `${line} Payment is on hold while Media Masters reviews it.`, link: '/station/requests' });
+    const all = [...admins.map((a) => a.email), ...emails].filter(Boolean);
+    if (all.length) {
+        const { text, html } = renderEmail({
+            heading: `Spot ${booking.bookingReference} has been disputed`,
+            paragraphs: [`${name} · ${spotWhen(booking)}.`, line, 'The payment for this spot stays on hold until Media Masters decides.'],
+            action: { label: 'Review', url: appUrl('/admin/settlement') },
+        });
+        await sendEmail({ to: all, subject: `Dispute on spot ${booking.bookingReference}`, text, html });
+    }
+    return true;
+});
+
+const notifyDisputeResolved = safely('dispute resolved', async (booking, { outcome, refunded, resolution }) => {
+    const [user, { station, users }] = await Promise.all([advertiserOf(booking), stationContacts(booking.stationId)]);
+    const result = outcome === 'RELEASE' ? 'The spot was found to have aired correctly; the payment went to the station.'
+        : outcome === 'REFUND' ? `The dispute was upheld: ${money(refunded, booking.currency)} is back in the advertiser's wallet.`
+            : `Settled in part: ${money(refunded, booking.currency)} back to the advertiser, the rest to the station.`;
+    const body = [result, resolution ? `Note: ${resolution}` : null].filter(Boolean).join(' ');
+    if (user) {
+        await pushInApp([user], { type: 'BOOKING_STATUS', title: `Dispute on ${booking.bookingReference} decided`, body, link: bookingsPath(user) });
+        const { text, html } = renderEmail({ heading: `Your dispute on ${booking.bookingReference} has been decided`, paragraphs: [`${station ? station.name : 'Station'} · ${spotWhen(booking)}.`, body], action: { label: 'View booking', url: appUrl(bookingsPath(user)) } });
+        await sendEmail({ to: user.email, subject: `Dispute decided: ${booking.bookingReference}`, text, html });
+    }
+    await pushInApp(users, { type: 'BOOKING_STATUS', title: `Dispute on ${booking.bookingReference} decided`, body, link: '/station/earnings' });
+    await resolveNotifications(`dispute:${booking._id}`);
+    return true;
+});
+
+// The station's earnings wallet was credited for an aired spot.
+const notifyStationEarning = safely('station earning', async (booking, amount) => {
+    if (!(amount > 0)) return false;
+    const { users } = await stationContacts(booking.stationId);
+    await pushInApp(users, { type: 'PAYMENT_RECEIVED', title: `Earned ${money(amount, booking.currency)}`, body: `${booking.bookingReference} · ${spotWhen(booking)}`, link: '/station/earnings' });
+    return true;
+});
+
+// A spot's slot ended long ago and the station hasn't said whether it aired.
+const notifyAirOverdue = safely('air overdue', async (booking, hours) => {
+    const [admins, { station, users, emails }] = await Promise.all([adminUsers(), stationContacts(booking.stationId)]);
+    const name = station ? station.name : 'A station';
+    await pushInApp(users, { type: 'BOOKING_STATUS', title: `Confirm spot ${booking.bookingReference}`, body: `It was due ${spotWhen(booking)}. Mark it aired (with the TX log and clip) or not aired. You're paid only once it's confirmed.`, link: '/station/requests' });
+    await pushInApp(admins, { type: 'BOOKING_STATUS', title: `${name} hasn't confirmed ${booking.bookingReference}`, body: `No answer ${hours}h after the slot (${spotWhen(booking)}). The advertiser's money is still on hold.`, link: '/admin/bookings' });
+    if (emails.length) {
+        const { text, html } = renderEmail({
+            heading: `Please confirm spot ${booking.bookingReference}`,
+            paragraphs: [`${name} · ${spotWhen(booking)}.`, `It is ${hours} hours past the slot and the spot hasn't been marked aired or not aired. Upload the TX log and a clip to be paid.`],
+            action: { label: 'Open your desk', url: appUrl('/station/requests') },
+        });
+        await sendEmail({ to: emails, subject: `Confirm whether spot ${booking.bookingReference} aired`, text, html });
+    }
+    return true;
+});
+
+const notifyPayoutRequested = safely('payout requested', async (request, station) => {
+    const admins = await adminUsers();
+    await pushInApp(admins, { type: 'PAYMENT_RECEIVED', title: `Payout request: ${station.name}`, body: `${money(request.amount, request.currency)} to ${request.account?.bankName || 'their bank'}`, link: '/admin/settlement?tab=payouts', ref: `payout:${request._id}` });
+    return true;
+});
+
+const notifyPayoutDecided = safely('payout decided', async (request, station) => {
+    const { users } = await stationContacts(station._id);
+    const paid = request.status === 'PAID';
+    await pushInApp(users, {
+        type: 'PAYMENT_RECEIVED',
+        title: paid ? `Payout sent: ${money(request.amount, request.currency)}` : 'Payout request declined',
+        body: paid ? `Reference ${request.reference || '—'}` : `${money(request.amount, request.currency)} is back in your earnings.${request.note ? ` ${request.note}` : ''}`,
+        link: '/station/earnings',
+    });
+    await resolveNotifications(`payout:${request._id}`);
+    return true;
+});
+
 // ── Wallet ──
 const walletPath = (user) => (user && user.accountType === 'INDIVIDUAL' ? '/wallet' : '/company/wallet');
 
@@ -429,6 +523,12 @@ module.exports = {
     resolveNotifications,
     notifyWalletLow,
     notifyWalletCredited,
+    notifyDisputeOpened,
+    notifyDisputeResolved,
+    notifyStationEarning,
+    notifyAirOverdue,
+    notifyPayoutRequested,
+    notifyPayoutDecided,
     notifyVerificationSubmitted,
     notifyVerificationDecision,
     notifyCheckout,

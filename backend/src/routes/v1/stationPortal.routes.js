@@ -22,6 +22,12 @@ router.use(protect);
 router.param('id', objectIdParam('station'));
 
 router.get('/summary', requireStationOperator('BOOKING_VIEW'), getSummary);
+
+// Earnings (paid for aired spots), the bank account, payout requests.
+const settlement = require('../../controllers/settlement.controller');
+router.get('/earnings', requireStationOperator('BOOKING_VIEW'), settlement.getEarnings);
+router.put('/stations/:id/payout-account', requireStationOperator('BOOKING_APPROVE'), settlement.setPayoutAccount);
+router.post('/stations/:id/payouts', requireStationOperator('BOOKING_APPROVE'), settlement.requestPayout);
 router.get('/stations', requireStationOperator('BOOKING_VIEW'), getMyStations);
 router.put('/stations/:id', requireStationOperator('BOOKING_APPROVE'), updateMyStation);
 

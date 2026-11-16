@@ -31,9 +31,24 @@ const Payment = src('models/Payment'), Creative = src('models/Creative');
 const Plan = src('models/Plan'), Subscription = src('models/Subscription'), Notification = src('models/Notification');
 const Verification = src('models/Verification');
 const Wallet = src('models/Wallet'), WalletTransaction = src('models/WalletTransaction');
+const PlatformSetting = src('models/PlatformSetting'), PayoutRequest = src('models/PayoutRequest');
 const documentStorage = src('utils/documentStorage');
 const { Readable } = require('stream');
 const payments = src('utils/payments');
+const fileUploads = src('utils/fileUploads');
+const uploadsStore = new Map();
+const makeUpload = (owner, purpose, contentType = 'application/pdf') => {
+    const id = String(new mongoose.Types.ObjectId());
+    uploadsStore.set(id, { owner: String(owner), purpose, contentType, claimed: false, fileId: new mongoose.Types.ObjectId(), name: purpose === 'PROOF_CLIP' ? 'clip.mp4' : 'txlog.pdf' });
+    return id;
+};
+fileUploads.claimUpload = async (user, uploadId, purpose) => {
+    const u = uploadsStore.get(String(uploadId));
+    if (!u || u.owner !== String(user._id || user.id) || u.purpose !== purpose || u.claimed) return { error: 'That file upload was not found or is already in use. Upload it again.' };
+    u.claimed = true;
+    return { file: { uploadId, fileId: u.fileId, name: u.name, contentType: u.contentType, size: 2048, purpose } };
+};
+fileUploads.sendFile = async (res, bucket, fileId) => res.json({ served: String(fileId), bucket });
 
 const OID = () => new mongoose.Types.ObjectId();
 let db;
@@ -42,7 +57,7 @@ const eq = (a, b) => (a == null && b == null) || (a != null && b != null && Stri
 const cmp = (x, y) => (x instanceof Date ? x.getTime() : x) - (y instanceof Date ? y.getTime() : y);
 const matches = (d, f = {}) => Object.entries(f).every(([k, v]) => {
     if (k === '$or') return v.some((g) => matches(d, g));
-    const x = d[k];
+    const x = k.includes('.') ? k.split('.').reduce((o, p) => (o == null ? undefined : o[p]), d) : d[k];
     if (v && typeof v === 'object' && !(v instanceof mongoose.Types.ObjectId) && !(v instanceof Date) && !Array.isArray(v)) {
         if ('$in' in v) return v.$in.some((y) => eq(x, y));
         if ('$nin' in v) return !v.$nin.some((y) => eq(x, y));
@@ -91,7 +106,12 @@ const q = (M, getter) => {
 const fail = {};
 const before = {};
 const applyUpdate = (o, u) => {
-    Object.assign(o, u.$set || {});
+    for (const [k, v] of Object.entries(u.$set || {})) {
+        if (!k.includes('.')) { o[k] = v; continue; }
+        const parts = k.split('.'); let t = o;
+        for (const p of parts.slice(0, -1)) { if (t[p] == null || typeof t[p] !== 'object') t[p] = {}; t = t[p]; }
+        t[parts.at(-1)] = v;
+    }
     for (const [k, v] of Object.entries(u.$addToSet || {})) { o[k] = o[k] || []; if (!o[k].some((z) => eq(z, v))) o[k].push(v); }
     for (const [k, n] of Object.entries(u.$inc || {})) {
         if (o[k] != null && typeof o[k] !== 'number') throw new Error(`Cannot apply $inc to a value of non-numeric type (${k})`);
@@ -99,7 +119,7 @@ const applyUpdate = (o, u) => {
         o[k] = (o[k] || 0) + n;
     }
 };
-const C = { users: User, employees: Employee, companies: Company, campaigns: Campaign, stations: Station, bookings: Booking, payments: Payment, creatives: Creative, plans: Plan, subscriptions: Subscription, notifications: Notification, verifications: Verification, wallets: Wallet, walletTransactions: WalletTransaction };
+const C = { users: User, employees: Employee, companies: Company, campaigns: Campaign, stations: Station, bookings: Booking, payments: Payment, creatives: Creative, plans: Plan, subscriptions: Subscription, notifications: Notification, verifications: Verification, wallets: Wallet, walletTransactions: WalletTransaction, platformSettings: PlatformSetting, payoutRequests: PayoutRequest };
 for (const [c, M] of Object.entries(C)) {
     M.find = (f) => q(M, () => db[c].filter((d) => matches(d, f)));
     M.findOne = (f) => q(M, () => db[c].find((d) => matches(d, f)) || null);
@@ -200,7 +220,7 @@ const seed = () => {
             st('s3'), st('s4'), st('s5'), st('press', { type: 'PRESS' })],
         campaigns: [cp('ivy'), cp('ivyClosed', { status: 'CANCELLED' }), cp('ivyRanged', { startDate: new Date(`${day(5)}T00:00:00Z`), endDate: new Date(`${day(8)}T00:00:00Z`) }),
             cp('ian', { userId: U.indiv2 }), cp('companyA', { companyId: A, userId: U.ownerA, status: 'SUBMITTED' })],
-        bookings: [], payments: [], creatives: [], audit: [], plans: [], subscriptions: [], notifications: [], verifications: [], wallets: [], walletTransactions: [],
+        bookings: [], payments: [], creatives: [], audit: [], plans: [], subscriptions: [], notifications: [], verifications: [], wallets: [], walletTransactions: [], platformSettings: [], payoutRequests: [],
     };
 };
 AuditLog.create = async (data) => { const a = new AuditLog(data); await a.validate(); db.audit.push(a.toObject()); return a; };
@@ -258,8 +278,10 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
 
     r = await pay(U.indiv, 'ivy', [item('fm1')]);
     const p1 = db.payments[0];
-    const charge1 = txOf(ivyWallet()).find((t) => t.type === 'CHARGE');
-    check('W5  Checkout pays from the wallet: 201, balance ₦70,000, payment provider WALLET, CHARGE entry for the campaign', r.code === 201 && ivyWallet().balance === 70000 && ivyWallet().totalSpent === 50000 && p1?.provider === 'WALLET' && r.body.data.walletBalance === 70000 && eq(charge1?.campaignId, CP.ivy._id) && charge1.amount === 50000, `${r.code} ${r.body.message} ${p1?.provider}`);
+    const hold1 = txOf(ivyWallet()).find((t) => t.type === 'HOLD');
+    const b1 = db.bookings[0];
+    check('W5  Checkout pays from the wallet: 201, ₦50,000 moves to "on hold" (not spent), ₦70,000 available, payment WALLET, HOLD entry for the campaign', r.code === 201 && ivyWallet().balance === 70000 && ivyWallet().held === 50000 && ivyWallet().totalSpent === 0 && p1?.provider === 'WALLET' && r.body.data.walletBalance === 70000 && eq(hold1?.campaignId, CP.ivy._id) && hold1.amount === 50000, `${r.code} ${r.body.message} ${p1?.provider}`);
+    check('W5b The booking records its held share: escrow HELD ₦50,000', b1?.escrow?.status === 'HELD' && b1.escrow.amount === 50000, JSON.stringify(b1?.escrow));
 
     r = await pay(U.indiv, 'ivy', [item('fm2', { time: '09:00' }), item('s3', { time: '09:00' })]);
     check('W6  ₦80,000 of spots with ₦70,000 left → 402, short by ₦10,000; balance unchanged, nothing booked', r.code === 402 && r.body.code === 'WALLET_INSUFFICIENT' && r.body.data.shortfall === 10000 && ivyWallet().balance === 70000 && counts() === '1/1' && /Fund your wallet with at least ₦10,000/.test(r.body.message), `${r.code} ${r.body.message}`);
@@ -280,9 +302,9 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
 
     r = await call(U.indiv, 'GET', '/api/v1/wallet');
     const row = (r.body.data?.byCampaign || [])[0];
-    check('W11 Dashboard figures: funded ₦120,000, spent ₦80,000, refunded ₦30,000; per campaign "ivy" net ₦50,000', r.code === 200 && r.body.data.wallet.totalFunded === 120000 && r.body.data.wallet.totalSpent === 80000 && r.body.data.wallet.totalRefunded === 30000 && row?.campaignName === 'ivy' && row.spent === 80000 && row.refunded === 30000 && row.net === 50000, JSON.stringify(row));
+    check('W11 Dashboard figures: funded ₦120,000, on hold ₦50,000, spent ₦0 (nothing aired yet), refunded ₦30,000; per campaign "ivy" booked ₦80,000, on hold ₦50,000', r.code === 200 && r.body.data.wallet.totalFunded === 120000 && r.body.data.wallet.held === 50000 && r.body.data.wallet.totalSpent === 0 && r.body.data.wallet.totalRefunded === 30000 && row?.campaignName === 'ivy' && row.booked === 80000 && row.spent === 0 && row.refunded === 30000 && row.onHold === 50000, JSON.stringify(row));
     r = await call(U.indiv, 'GET', '/api/v1/wallet/transactions');
-    check('W12 History: 4 entries, newest first (refund, charge, charge, fund)', r.code === 200 && r.body.data.map((t) => t.type).join(',') === 'REFUND,CHARGE,CHARGE,FUND' && r.body.data[1].campaignName === 'ivy', `${r.code} ${(r.body.data || []).map((t) => t.type).join(',')}`);
+    check('W12 History: 4 entries, newest first (refund, hold, hold, fund)', r.code === 200 && r.body.data.map((t) => t.type).join(',') === 'REFUND,HOLD,HOLD,FUND' && r.body.data[1].campaignName === 'ivy', `${r.code} ${(r.body.data || []).map((t) => t.type).join(',')}`);
 
     // A checkout that fails after the wallet was charged gives the money straight back.
     const beforeFail = ivyWallet().balance;
@@ -322,6 +344,109 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
     check('W22 Removing more than the balance → 400, balance unchanged', r.code === 400 && coWallet.balance === 225000, `${r.code}`);
     r = await call(U.admin, 'GET', `/api/v1/admin/wallets/${coWallet._id}/transactions`);
     check('W23 Admin sees the wallet history', r.code === 200 && r.body.data.map((t) => t.type).join(',') === 'ADJUSTMENT,FUND', `${r.code}`);
+
+    // ── E: money held until the spot airs ──
+    const { runSettlementJob } = src('utils/reminders');
+    const bk = (id) => db.bookings.find((b) => eq(b._id, id));
+    const stWallet = () => db.wallets.find((w) => eq(w.stationId, S.fm1._id));
+    db.stations.find((s) => eq(s._id, S.fm1._id)).managerIds = [U.station];
+    const past = new Date(Date.now() - 2 * 864e5);
+    const inPast = (b) => { bk(b._id).date = new Date(Date.UTC(past.getUTCFullYear(), past.getUTCMonth(), past.getUTCDate())); };
+    const proofs = () => ({ logUploadId: makeUpload(U.station, 'PROOF_LOG'), clipUploadId: makeUpload(U.station, 'PROOF_CLIP', 'video/mp4') });
+
+    inPast(b1);
+    r = await call(U.station, 'PATCH', `/api/v1/bookings/${b1._id}/complete`, proofs());
+    check('E1  A spot still waiting for the media house to accept cannot be marked aired → 400', r.code === 400 && bk(b1._id).escrow.status === 'HELD', `${r.code} ${r.body.message}`);
+    await call(U.station, 'PATCH', `/api/v1/bookings/${b1._id}/accept`, {});
+    r = await call(U.station, 'PATCH', `/api/v1/bookings/${b1._id}/complete`, {});
+    check('E2  Marking aired without proof → 400 PROOF_REQUIRED (TX log and clip)', r.code === 400 && r.body.code === 'PROOF_REQUIRED' && bk(b1._id).status === 'ACCEPTED', `${r.code} ${r.body.message}`);
+    r = await call(U.station, 'PATCH', `/api/v1/bookings/${b1._id}/complete`, { logUploadId: makeUpload(U.indiv, 'PROOF_LOG'), clipUploadId: makeUpload(U.station, 'PROOF_CLIP', 'video/mp4') });
+    check("E3  Someone else's upload can't be used as proof → 400", r.code === 400 && bk(b1._id).status === 'ACCEPTED', `${r.code} ${r.body.message}`);
+    const t0 = Date.now();
+    r = await call(U.station, 'PATCH', `/api/v1/bookings/${b1._id}/complete`, { ...proofs(), note: 'Aired 22:14' });
+    const e1 = bk(b1._id).escrow;
+    const hoursLeft = (new Date(e1.releaseAt) - t0) / 3600000;
+    check('E4  With the TX log and clip → COMPLETED; money stays HELD as AIRED with an 18-hour dispute window', r.code === 200 && bk(b1._id).status === 'COMPLETED' && e1.status === 'AIRED' && hoursLeft > 17.9 && hoursLeft < 18.1 && !!e1.proof.logFileId && !!e1.proof.clipFileId && ivyWallet().held === 50000, `${r.code} ${r.body.message} ${hoursLeft}`);
+    check('E5  The advertiser is told it aired and can dispute before the window closes', db.notifications.some((n) => eq(n.userId, U.indiv) && /aired/.test(n.title) && /dispute/i.test(n.body)));
+    r = await call(U.indiv, 'GET', `/api/v1/bookings/${b1._id}/proof?which=clip`);
+    const rIan = await call(U.indiv2, "GET", `/api/v1/bookings/${b1._id}/proof?which=log`);
+    const er3 = await call(U.station, 'GET', `/api/v1/bookings/${b1._id}/proof?which=log`);
+    check("E6  The advertiser and the media house open the proof (bucket proofs); another advertiser can't (404)", r.code === 200 && r.body.served === String(e1.proof.clipFileId) && r.body.bucket === 'proofs' && er3.code === 200 && rIan.code === 404, `${r.code} ${er3.code} ${rIan.code}`);
+
+    r = await call(U.indiv, 'POST', `/api/v1/bookings/${b1._id}/dispute`, { reason: 'NOT_AIRED' });
+    check('E7  A dispute needs details → 400', r.code === 400 && bk(b1._id).escrow.status === 'AIRED', `${r.code}`);
+    r = await call(U.indiv, 'POST', `/api/v1/bookings/${b1._id}/dispute`, { reason: 'CUT_SHORT', details: 'Only 30 seconds of our 60 aired' });
+    check('E8  Advertiser disputes within the window → DISPUTED; admins and the media house are told; money still held', r.code === 200 && bk(b1._id).escrow.status === 'DISPUTED' && bk(b1._id).escrow.dispute.reason === 'CUT_SHORT' && db.notifications.some((n) => eq(n.userId, U.admin) && /Dispute/.test(n.title)) && db.notifications.some((n) => eq(n.userId, U.station) && /disputed/.test(n.title)) && ivyWallet().held === 50000, `${r.code} ${r.body.message}`);
+    r = await runSettlementJob(new Date(Date.now() + 30 * 3600000));
+    check('E9  A disputed spot is never paid out automatically, even after the window', bk(b1._id).escrow.status === 'DISPUTED' && !stWallet(), JSON.stringify(r));
+    r = await call(U.admin, 'POST', `/api/v1/admin/bookings/${b1._id}/resolve-dispute`, { outcome: 'SPLIT', refundAmount: 20000 });
+    check('E10 Resolving needs a note → 400', r.code === 400 && bk(b1._id).escrow.status === 'DISPUTED', `${r.code}`);
+    const avail0 = ivyWallet().balance;
+    r = await call(U.admin, 'POST', `/api/v1/admin/bookings/${b1._id}/resolve-dispute`, { outcome: 'SPLIT', refundAmount: 20000, resolution: 'TX log shows a 30s cut' });
+    check('E11 Admin splits it: ₦20,000 back to the advertiser, ₦30,000 to the media house; held cleared, spent ₦30,000', r.code === 200 && bk(b1._id).escrow.status === 'SPLIT' && ivyWallet().balance === avail0 + 20000 && ivyWallet().held === 0 && ivyWallet().totalSpent === 30000 && stWallet()?.balance === 30000 && bk(b1._id).escrow.stationAmount === 30000, `${r.code} ${r.body.message} ${ivyWallet().balance - avail0} ${stWallet()?.balance}`);
+    check('E12 Both sides are told the decision', db.notifications.some((n) => eq(n.userId, U.indiv) && /decided/.test(n.title)) && db.notifications.some((n) => eq(n.userId, U.station) && /decided/.test(n.title)));
+
+    // Four more spots on fm1 (₦200,000), all due in the past.
+    await call(U.indiv, 'POST', '/api/v1/wallet/fund', { amount: 500000 });
+    r = await pay(U.indiv, 'ivy', [item('fm1', { time: '14:00' }), item('fm1', { time: '15:00' }), item('fm1', { time: '16:00' }), item('fm1', { time: '17:00' })]);
+    const [bA, bB, bC, bD] = ['14:00', '15:00', '16:00', '17:00'].map((t) => db.bookings.find((b) => eq(b.stationId, S.fm1._id) && b.time === t && b.escrow?.status === 'HELD'));
+    check('E13 Four spots booked: ₦200,000 on hold, each spot HELD ₦50,000', r.code === 201 && ivyWallet().held === 200000 && [bA, bB, bC, bD].every((b) => b && b.escrow.amount === 50000), `${r.code} ${r.body.message}`);
+    for (const b of [bA, bB, bC, bD]) { inPast(b); await call(U.station, 'PATCH', `/api/v1/bookings/${b._id}/accept`, {}); }
+
+    await call(U.station, 'PATCH', `/api/v1/bookings/${bA._id}/complete`, proofs());
+    r = await call(U.indiv, 'POST', `/api/v1/bookings/${bA._id}/confirm-aired`, {});
+    check('E14 Advertiser confirms early → paid to the media house now (RELEASED, +₦50,000 earned)', r.code === 200 && bk(bA._id).escrow.status === 'RELEASED' && stWallet().balance === 80000 && ivyWallet().held === 150000 && db.notifications.some((n) => eq(n.userId, U.station) && /Earned/.test(n.title)), `${r.code} ${r.body.message} ${stWallet().balance}`);
+
+    r = await call(U.admin, 'PATCH', '/api/v1/admin/settlement-settings', { commissionPercent: 80 });
+    check('E15 Commission over 50% → 400', r.code === 400, `${r.code}`);
+    r = await call(U.indiv, 'PATCH', '/api/v1/admin/settlement-settings', { commissionPercent: 10 });
+    check('E16 Only admins change the settings → 403', r.code === 403, `${r.code}`);
+    r = await call(U.admin, 'PATCH', '/api/v1/admin/settlement-settings', { commissionPercent: 10, disputeHours: 6 });
+    const er4 = await call(U.admin, 'GET', '/api/v1/admin/settlement-settings');
+    check('E17 Admin sets 10% commission and a 6-hour dispute window (confirmation deadline stays 12h)', r.code === 200 && er4.body.data.commissionPercent === 10 && er4.body.data.disputeHours === 6 && er4.body.data.confirmHours === 12, `${r.code} ${JSON.stringify(er4.body.data)}`);
+
+    await call(U.station, 'PATCH', `/api/v1/bookings/${bB._id}/complete`, proofs());
+    const hoursB = (new Date(bk(bB._id).escrow.releaseAt) - Date.now()) / 3600000;
+    r = await runSettlementJob(new Date(Date.now() + 5 * 3600000));
+    check('E18 Before the 6-hour window ends, nothing is paid (the two unconfirmed past spots are chased)', hoursB > 5.9 && hoursB < 6.1 && bk(bB._id).escrow.status === 'AIRED' && r.released === 0 && r.overdue === 2, `${hoursB} ${JSON.stringify(r)}`);
+    r = await runSettlementJob(new Date(Date.now() + 7 * 3600000));
+    check('E19 No dispute within the window → paid automatically: the media house gets ₦45,000 (₦50,000 less 10%)', r.released === 1 && bk(bB._id).escrow.status === 'RELEASED' && bk(bB._id).escrow.commission === 5000 && stWallet().balance === 125000 && ivyWallet().held === 100000, `${JSON.stringify(r)} ${stWallet().balance}`);
+
+    const availC = ivyWallet().balance;
+    r = await call(U.station, 'PATCH', `/api/v1/bookings/${bC._id}/not-aired`, { note: 'Transmitter fault' });
+    check("E20 The media house says it couldn't air it → NOT_AIRED, ₦50,000 back to the advertiser's available balance", r.code === 200 && bk(bC._id).status === 'NOT_AIRED' && bk(bC._id).escrow.status === 'REFUNDED' && ivyWallet().balance === availC + 50000 && ivyWallet().held === 50000 && db.notifications.some((n) => eq(n.userId, U.indiv) && /not aired/.test(n.title)), `${r.code} ${r.body.message} ${bk(bC._id).escrow.status}`);
+
+    check("E21 A spot more than 12 hours past its slot with no answer → the media house and admins were chased", !!bk(bD._id).escrow.overdueAlertedAt && db.notifications.some((n) => eq(n.userId, U.admin) && /hasn't confirmed/.test(n.title)) && db.notifications.some((n) => eq(n.userId, U.station) && /Confirm spot/.test(n.title)));
+    r = await runSettlementJob(new Date());
+    check('E22 …only once (not again on the next run)', r.overdue === 0, JSON.stringify(r));
+
+    r = await call(U.station, 'GET', '/api/v1/station-portal/earnings');
+    const fm1E = (r.body.data || []).find((x) => eq(x.station._id, S.fm1._id));
+    check('E23 Media house earnings: ₦125,000 earned; ₦45,000 expected from the spot not yet confirmed (after 10%); grouped by programme and day', r.code === 200 && fm1E?.earned === 125000 && fm1E.expected === 45000 && fm1E.byProgramme.length === 1 && fm1E.byProgramme[0].spots === 1, `${r.code} ${JSON.stringify(fm1E && { earned: fm1E.earned, expected: fm1E.expected, g: fm1E.byProgramme })}`);
+
+    r = await call(U.station, 'POST', `/api/v1/station-portal/stations/${S.fm1._id}/payouts`, { amount: 100000 });
+    check('E24 Payout without a bank account → 400', r.code === 400, `${r.code} ${r.body.message}`);
+    r = await call(U.station, 'PUT', `/api/v1/station-portal/stations/${S.fm1._id}/payout-account`, { bankName: 'GTBank', accountNumber: '12345', accountName: 'Station fm1 Ltd' });
+    check('E25 Account number must be 10 digits → 400', r.code === 400, `${r.code}`);
+    r = await call(U.station, 'PUT', `/api/v1/station-portal/stations/${S.fm1._id}/payout-account`, { bankName: 'GTBank', accountNumber: '0123456789', accountName: 'Station fm1 Ltd' });
+    check('E26 Bank account saved', r.code === 200, `${r.code} ${r.body.message}`);
+    r = await call(U.station, 'POST', `/api/v1/station-portal/stations/${S.fm1._id}/payouts`, { amount: 1000000 });
+    check('E27 More than the earned balance → 400', r.code === 400 && stWallet().balance === 125000, `${r.code}`);
+    r = await call(U.station, 'POST', `/api/v1/station-portal/stations/${S.fm1._id}/payouts`, { amount: 100000 });
+    const payoutId = r.body.data?._id;
+    check('E28 Payout request ₦100,000 → PENDING; earned balance ₦25,000; admins told', r.code === 201 && r.body.data.status === 'PENDING' && stWallet().balance === 25000 && db.notifications.some((n) => eq(n.userId, U.admin) && /Payout request/.test(n.title)), `${r.code} ${r.body.message}`);
+    r = await call(U.station, 'POST', `/api/v1/station-portal/stations/${S.fm1._id}/payouts`, { amount: 5000 });
+    check('E29 One pending request at a time → 409', r.code === 409, `${r.code}`);
+    r = await call(U.admin, 'POST', `/api/v1/admin/payouts/${payoutId}/paid`, {});
+    check('E30 Marking paid needs the transfer reference → 400', r.code === 400, `${r.code}`);
+    r = await call(U.admin, 'POST', `/api/v1/admin/payouts/${payoutId}/paid`, { reference: 'GTB-TRF-0099' });
+    check('E31 Admin marks it paid with the reference; the media house is told', r.code === 200 && r.body.data.status === 'PAID' && db.notifications.some((n) => eq(n.userId, U.station) && /Payout sent/.test(n.title)), `${r.code} ${r.body.message}`);
+    r = await call(U.station, 'POST', `/api/v1/station-portal/stations/${S.fm1._id}/payouts`, { amount: 20000 });
+    const er5 = await call(U.admin, 'POST', `/api/v1/admin/payouts/${r.body.data?._id}/decline`, { note: 'Account name does not match' });
+    check('E32 A declined payout goes back to the earned balance', r.code === 201 && er5.code === 200 && er5.body.data.status === 'DECLINED' && stWallet().balance === 25000, `${r.code} ${er5.code} ${stWallet().balance}`);
+    r = await call(U.admin, 'GET', '/api/v1/admin/disputes?status=resolved');
+    const er6 = await call(U.admin, 'GET', '/api/v1/admin/payouts');
+    check('E33 Admin sees resolved disputes and all payouts', r.code === 200 && r.body.data.some((d) => eq(d._id, b1._id) && d.escrow.dispute.outcome === 'SPLIT') && er6.code === 200 && er6.body.data.length === 2, `${r.code} ${er6.code}`);
 
     // ── WALLET_PAYMENTS=false falls back to the card provider ──
     process.env.WALLET_PAYMENTS = 'false';

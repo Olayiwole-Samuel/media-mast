@@ -60,6 +60,9 @@ const PURPOSES = {
     CREATIVE: { bucket: 'creatives', maxBytes: 100 * MB, types: MEDIA_TYPES, label: 'an advert (video, image or audio)' },
     ARCON: { bucket: 'creatives', maxBytes: 10 * MB, types: PAPER_TYPES, label: 'an ARCON certificate (PDF or image)' },
     VERIFICATION: { bucket: 'verification', maxBytes: 10 * MB, types: RATE_CARD_TYPES, label: 'a document (PDF, image, Word or Excel)' },
+    // Proof a spot aired: the station's TX log, and a clip of the spot on air.
+    PROOF_LOG: { bucket: 'proofs', maxBytes: 20 * MB, types: RATE_CARD_TYPES, label: 'a TX log (PDF, image, Word or Excel)' },
+    PROOF_CLIP: { bucket: 'proofs', maxBytes: 200 * MB, types: MEDIA_TYPES, label: 'a clip of the spot on air (video, audio or image)' },
 };
 
 const sessions = () => mongoose.connection.db.collection('uploadsessions');

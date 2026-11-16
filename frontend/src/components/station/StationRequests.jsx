@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Inbox, Loader2, Check, X, MessageSquareWarning, CalendarCheck, BadgeCheck } from "lucide-react";
+import { Inbox, Loader2, Check, X, MessageSquareWarning, CalendarCheck, BadgeCheck, FileText, Film, Ban, Coins } from "lucide-react";
 import {
     getStationBookings,
     acceptStationBooking,
@@ -10,8 +10,11 @@ import {
     requestStationBookingChanges,
     scheduleStationBooking,
     completeStationBooking,
+    markStationBookingAired,
+    markStationBookingNotAired,
+    uploadFileInParts,
 } from "@/lib/api";
-import { bookingStatus, formatMoney, formatDate, spotHasAired } from "@/lib/status";
+import { bookingStatus, formatMoney, formatDate, spotHasAired, ESCROW_STATUS } from "@/lib/status";
 import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/PageState";
 import BookingAdvert from "@/components/station/BookingAdvert";
 
@@ -21,6 +24,9 @@ import BookingAdvert from "@/components/station/BookingAdvert";
 //   PENDING → accept / decline / ask to reschedule (with a suggested date) ·
 //   ACCEPTED → schedule ·
 //   SCHEDULED → mark as aired (complete) once the slot has ended.
+// Wallet bookings: the advertiser's money is held until the spot airs. To be
+// paid, mark it aired with the TX log and a clip; or say it didn't air (the
+// advertiser is refunded). Payment follows the advertiser's dispute window.
 
 const FILTERS = [
     { value: "ACTION", label: "Needs action" },
@@ -41,6 +47,93 @@ const PAYMENT_BADGE = {
 };
 
 const buttonBase = "inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-50";
+
+const STATION_ESCROW = {
+    HELD: "Money held: you're paid once it airs",
+    AIRED: "Aired: payment after the advertiser's check",
+    DISPUTED: "Disputed: payment on hold while Media Masters reviews",
+    RELEASED: "Paid to your earnings",
+    REFUNDED: "Refunded to the advertiser",
+    SPLIT: "Part paid, part refunded",
+};
+
+// After the slot: upload the TX log and a clip, or say it didn't air.
+function AiredPanel({ booking, busy, onAction }) {
+    const [log, setLog] = useState(null);
+    const [clip, setClip] = useState(null);
+    const [note, setNote] = useState("");
+    const [progress, setProgress] = useState(null);
+    const [error, setError] = useState("");
+    const [notAired, setNotAired] = useState(false);
+    const needsProof = !!booking.escrow;
+    const working = busy || progress !== null;
+
+    const submit = async () => {
+        setError("");
+        if (needsProof && (!log || !clip)) return setError("Attach the TX log and a clip of the spot on air.");
+        try {
+            let ids = {};
+            if (needsProof) {
+                setProgress(0);
+                const l = await uploadFileInParts(log, "PROOF_LOG", (p) => setProgress(p * 0.2));
+                const c = await uploadFileInParts(clip, "PROOF_CLIP", (p) => setProgress(0.2 + p * 0.8));
+                ids = { logUploadId: l.uploadId, clipUploadId: c.uploadId };
+            }
+            setProgress(null);
+            await onAction("complete", booking, { ...ids, note });
+        } catch (err) {
+            setProgress(null);
+            setError(err?.message || "Upload failed. Try again.");
+        }
+    };
+
+    const fileBox = (label, Icon, file, setFile, accept) => (
+        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 px-3 py-2.5 text-sm hover:border-emerald-400 dark:border-slate-700">
+            <Icon className="h-4 w-4 shrink-0 text-emerald-600" />
+            <span className="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-200">{file ? file.name : label}</span>
+            <input type="file" accept={accept} className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+        </label>
+    );
+
+    return (
+        <div className="mt-4 space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/50 p-3 dark:border-emerald-500/20 dark:bg-emerald-500/5">
+            {needsProof ? (
+                <>
+                    <p className="text-sm text-slate-700 dark:text-slate-200">Did it air? Upload proof to be paid.</p>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {fileBox("TX log (PDF, image, Excel)", FileText, log, setLog, ".pdf,.png,.jpg,.jpeg,.xls,.xlsx,.doc,.docx,.csv")}
+                        {fileBox("Clip of the spot on air", Film, clip, setClip, "video/*,audio/*,image/*")}
+                    </div>
+                </>
+            ) : (
+                <p className="text-sm text-slate-700 dark:text-slate-200">Did it air?</p>
+            )}
+            <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} placeholder={notAired ? "Why it couldn't air (the advertiser sees this)" : "Optional note, e.g. aired at 22:14"}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white" />
+            {error && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+            {progress !== null && <p className="text-xs text-slate-500"><Loader2 className="mr-1 inline h-3.5 w-3.5 animate-spin" /> Uploading proof… {Math.round(progress * 100)}%</p>}
+            <div className="flex flex-wrap gap-2">
+                {!notAired ? (
+                    <>
+                        <button type="button" disabled={working} onClick={submit} className={`${buttonBase} bg-emerald-500 text-white hover:bg-emerald-600`}>
+                            <BadgeCheck className="h-4 w-4" /> Mark as aired
+                        </button>
+                        <button type="button" disabled={working} onClick={() => setNotAired(true)} className={`${buttonBase} bg-white text-red-600 hover:bg-red-50 dark:bg-slate-900 dark:text-red-400`}>
+                            <Ban className="h-4 w-4" /> It didn&apos;t air
+                        </button>
+                    </>
+                ) : (
+                    <>
+                        <button type="button" disabled={working || !note.trim()} onClick={() => onAction("notAired", booking, { note })} className={`${buttonBase} bg-red-500 text-white hover:bg-red-600`}>
+                            <Ban className="h-4 w-4" /> Confirm: not aired (refund the advertiser)
+                        </button>
+                        <button type="button" disabled={working} onClick={() => setNotAired(false)} className={`${buttonBase} text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800`}>Back</button>
+                    </>
+                )}
+            </div>
+        </div>
+    );
+}
 
 function BookingCard({ booking, busy, onAction }) {
     const [note, setNote] = useState("");
@@ -75,6 +168,14 @@ function BookingCard({ booking, busy, onAction }) {
                     </span>
                 </div>
             </div>
+
+            {booking.escrow && (
+                <p className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
+                    <Coins className="h-3.5 w-3.5 text-amber-500" /> {STATION_ESCROW[booking.escrow.status] || ESCROW_STATUS[booking.escrow.status]?.label}
+                    {booking.escrow.status === "AIRED" && booking.escrow.releaseAt ? ` (by ${new Date(booking.escrow.releaseAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })})` : ""}
+                    {booking.escrow.status === "DISPUTED" && booking.escrow.dispute?.details ? `: "${booking.escrow.dispute.details}"` : ""}
+                </p>
+            )}
 
             <BookingAdvert booking={booking} />
 
@@ -129,7 +230,7 @@ function BookingCard({ booking, busy, onAction }) {
                 </div>
             )}
 
-            {booking.status === "ACCEPTED" && (
+            {booking.status === "ACCEPTED" && !aired && (
                 <div className="mt-4">
                     <button type="button" disabled={busy} onClick={() => onAction("schedule", booking)} className={`${buttonBase} bg-emerald-500 text-white hover:bg-emerald-600`}>
                         <CalendarCheck className="h-4 w-4" /> Mark as scheduled
@@ -137,16 +238,11 @@ function BookingCard({ booking, busy, onAction }) {
                 </div>
             )}
 
-            {booking.status === "SCHEDULED" && (
-                <div className="mt-4 space-y-2">
-                    <button type="button" disabled={busy || !aired} onClick={() => onAction("complete", booking)} title={!aired ? "Available once the spot's time slot has ended" : undefined} className={`${buttonBase} bg-emerald-500 text-white hover:bg-emerald-600`}>
-                        <BadgeCheck className="h-4 w-4" /> Mark as aired (complete)
-                    </button>
-                    {!aired && (
-                        <p className="text-xs text-slate-500 dark:text-slate-400">You can mark this as aired once its time slot has ended.</p>
-                    )}
-                </div>
-            )}
+            {["ACCEPTED", "SCHEDULED"].includes(booking.status) && (aired ? (
+                <AiredPanel booking={booking} busy={busy} onAction={onAction} />
+            ) : booking.status === "SCHEDULED" && (
+                <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">Once its time slot has ended, mark it aired with the TX log and a clip (or say it didn&apos;t air).</p>
+            ))}
         </li>
     );
 }
@@ -180,7 +276,7 @@ export default function StationRequests({ wrapperClassName = "p-4 sm:p-6 lg:p-8"
     const visible = useMemo(() => bookings.filter((b) => {
         if (filter === "ALL") return true;
         if (filter === "ACTION") return NEEDS_ACTION.includes(b.status);
-        if (filter === "CLOSED") return ["REJECTED", "CANCELLED", "CHANGES_REQUESTED"].includes(b.status);
+        if (filter === "CLOSED") return ["REJECTED", "CANCELLED", "CHANGES_REQUESTED", "NOT_AIRED"].includes(b.status);
         return b.status === filter;
     }), [bookings, filter]);
 
@@ -194,7 +290,10 @@ export default function StationRequests({ wrapperClassName = "p-4 sm:p-6 lg:p-8"
                 reject: () => rejectStationBooking(booking._id, note),
                 changes: () => requestStationBookingChanges(booking._id, { ...note, ...(extra.proposedDate ? { proposedDate: extra.proposedDate } : {}) }),
                 schedule: () => scheduleStationBooking(booking._id),
-                complete: () => completeStationBooking(booking._id),
+                complete: () => (extra.logUploadId || booking.escrow
+                    ? markStationBookingAired(booking._id, { logUploadId: extra.logUploadId, clipUploadId: extra.clipUploadId, note: extra.note?.trim() || undefined })
+                    : completeStationBooking(booking._id)),
+                notAired: () => markStationBookingNotAired(booking._id, extra.note?.trim()),
             };
             const result = await calls[action]();
             const updated = result?.data || {};

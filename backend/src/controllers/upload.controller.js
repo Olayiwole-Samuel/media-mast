@@ -11,6 +11,10 @@ const mayUpload = async (user, purpose) => {
     if (purpose === 'VERIFICATION') {
         return !!(await Verification.exists({ userId: user._id }));
     }
+    // Proof of airing comes from the media house's desk.
+    if (purpose === 'PROOF_LOG' || purpose === 'PROOF_CLIP') {
+        return user.status === 'ACTIVE' && ['STATION', 'ADMIN', 'COMPANY'].includes(user.accountType);
+    }
     return user.status === 'ACTIVE' && ADVERTISER_TYPES.includes(user.accountType);
 };
 

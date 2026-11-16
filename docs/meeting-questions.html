@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Media Masters: questions for the meeting</title>
+<style>
+  @page { size: A4; margin: 16mm 15mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", Arial, sans-serif; color: #0f172a; font-size: 10.5pt; line-height: 1.45; margin: 0; }
+  header { border-bottom: 3px solid #10b981; padding-bottom: 10px; margin-bottom: 14px; }
+  h1 { font-size: 20pt; margin: 0 0 4px; }
+  .sub { color: #475569; margin: 0; }
+  .legend { margin-top: 8px; font-size: 9pt; color: #475569; }
+  .legend span { display: inline-block; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; border-radius: 4px; padding: 0 6px; margin-right: 4px; font-weight: 600; }
+  h2 { font-size: 12.5pt; margin: 18px 0 6px; color: #065f46; break-after: avoid; }
+  ol { margin: 0; padding-left: 0; list-style: none; counter-reset: none; }
+  li { border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; margin-bottom: 7px; break-inside: avoid; }
+  .q { font-weight: 600; }
+  .n { display: inline-block; min-width: 22px; color: #10b981; font-weight: 700; }
+  .cur { margin-top: 4px; font-size: 9.5pt; }
+  .cur b { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; border-radius: 4px; padding: 0 5px; font-size: 8.5pt; text-transform: uppercase; letter-spacing: .03em; }
+  .cur.open b { background: #fffbeb; color: #92400e; border-color: #fde68a; }
+  .notes { margin-top: 6px; border-bottom: 1px dotted #94a3b8; height: 18px; }
+  footer { margin-top: 16px; font-size: 8.5pt; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Questions for the meeting</h1>
+  <p class="sub">Media Masters: wallet, proof of airing, disputes, media house payouts and booking rules</p>
+  <p class="legend"><span>Current</span> what the system does now (it can be changed after the meeting) &nbsp; <span style="background:#fffbeb;color:#92400e;border-color:#fde68a">Open</span> still to be decided</p>
+</header>
+
+<h2>A. Paying for bookings (the wallet)</h2>
+<ol>
+  <li><div class="q"><span class="n">1</span>Should every advertiser pay from a wallet they fund in advance, rather than paying at checkout?</div><div class="cur"><b>Current</b> Yes, the wallet is the only way to pay.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">2</span>Who in a company should be allowed to fund the wallet and spend from it?</div><div class="cur"><b>Current</b> Only the company owner (team logins removed).</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">3</span>When an advertiser books, should the money be held until the spot airs, rather than taken straight away?</div><div class="cur"><b>Current</b> Yes, held until the spot is confirmed aired.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">4</span>If an advertiser doesn't have enough in their wallet, should the system stop the booking and ask them to top up?</div><div class="cur"><b>Current</b> Yes, with an alert showing how much is missing.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">5</span>Should advertisers get an alert when their balance runs low? Who sets the amount?</div><div class="cur"><b>Current</b> Yes, the advertiser sets the amount.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">6</span>Which ways should advertisers be able to fund their wallet: card, bank transfer, USSD?</div><div class="cur"><b>Current</b> Test mode now; Paystack later.</div><div class="notes"></div></li>
+</ol>
+
+<h2>B. Proving a spot aired</h2>
+<ol>
+  <li><div class="q"><span class="n">7</span>What proof should a media house provide to show a spot aired?</div><div class="cur"><b>Current</b> Both the TX log and a clip.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">8</span>How long after a spot's time slot should the media house have to confirm it aired, before admin is alerted?</div><div class="cur"><b>Current</b> 12 hours.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">9</span>If a media house couldn't air a spot, should the advertiser get their money back automatically and be offered a reschedule?</div><div class="cur"><b>Current</b> Yes.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">10</span>In future, would you consider an independent broadcast-monitoring service to confirm airing automatically?</div><div class="cur open"><b>Open</b></div><div class="notes"></div></li>
+</ol>
+
+<h2>C. Disputes</h2>
+<ol>
+  <li><div class="q"><span class="n">11</span>After a spot is confirmed aired, how long should the advertiser have to raise a problem?</div><div class="cur"><b>Current</b> 18 hours.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">12</span>If nobody disputes within that time, should the money be released to the media house automatically?</div><div class="cur"><b>Current</b> Yes.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">13</span>Should the advertiser be able to confirm early, so the media house is paid straight away?</div><div class="cur"><b>Current</b> Yes.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">14</span>Which problems count as a valid dispute: not aired, wrong advert, wrong time or programme, cut short? Anything else?</div><div class="cur open"><b>Open</b></div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">15</span>Who decides a dispute, and how fast should it be resolved?</div><div class="cur"><b>Current</b> A Media Masters admin.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">16</span>Can a dispute end in a partial refund, for example a 60-second spot cut to 30 seconds?</div><div class="cur open"><b>Open</b></div><div class="notes"></div></li>
+</ol>
+
+<h2>D. Media house money</h2>
+<ol>
+  <li><div class="q"><span class="n">17</span>Should media houses see booked but not-yet-aired spots as "Expected", and only receive the money as "Earned" after airing?</div><div class="cur"><b>Current</b> Yes.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">18</span>Does Media Masters keep a commission on each spot? What percentage?</div><div class="cur open"><b>Open</b> To be decided; built as a setting starting at 0%.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">19</span>How should media houses be paid: on request, or automatically (weekly, monthly)?</div><div class="cur open"><b>Open</b></div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">20</span>Until online payouts are connected, is it acceptable for admin to send payouts by bank transfer and mark them paid in the system?</div><div class="cur open"><b>Open</b></div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">21</span>Is there a minimum amount before a media house can request a payout?</div><div class="cur open"><b>Open</b></div><div class="notes"></div></li>
+</ol>
+
+<h2>E. Booking rules</h2>
+<ol>
+  <li><div class="q"><span class="n">22</span>Should an advertiser be limited to one spot length per programme or time belt per day (e.g. 60s or 30s in News at 10, not both)?</div><div class="cur"><b>Current</b> Yes.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">23</span>Can an advertiser book several spots of the same length in the same programme on the same day?</div><div class="cur"><b>Current</b> Yes.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">24</span>Should the campaign's air date decide the booking date, with the media house confirming or asking to reschedule?</div><div class="cur"><b>Current</b> Yes.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">25</span>Is 7.5% VAT always added on top of the rate card price?</div><div class="cur"><b>Current</b> Yes.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">26</span>Should booking 3 or more media houses in one checkout earn a discount? How much?</div><div class="cur"><b>Current</b> 5% for 3+ media houses, 10% for 5+.</div><div class="notes"></div></li>
+</ol>
+
+<h2>F. Accounts</h2>
+<ol>
+  <li><div class="q"><span class="n">27</span>Should each company have just one login (the owner)? Or do you want team members back later, with limits on what they can do?</div><div class="cur"><b>Current</b> One login; the team feature is switched off but can be restored.</div><div class="notes"></div></li>
+  <li><div class="q"><span class="n">28</span>For media houses, who should have the login: one person, or several staff?</div><div class="cur open"><b>Open</b></div><div class="notes"></div></li>
+</ol>
+
+<footer>Media Masters · meeting questions · "Current" answers are what the system does today and will be adjusted after the meeting.</footer>
+</body>
+</html>

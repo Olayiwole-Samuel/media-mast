@@ -5,11 +5,12 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 import { CalendarDays, Loader2, Plus, X } from "lucide-react";
 import { getBookings, cancelBooking, resubmitBooking, getBookingCancellationQuote } from "@/lib/api";
-import { bookingStatus, canCancelBooking, formatMoney, formatDate } from "@/lib/status";
+import { bookingStatus, canCancelBooking, formatMoney, formatDate, ESCROW_STATUS } from "@/lib/status";
 import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/PageState";
 import { useSession } from "@/lib/auth";
 import { advertiserPaths } from "@/lib/cart";
 import CancellationDialog from "@/components/bookings/CancellationDialog";
+import AiredReview from "@/components/bookings/AiredReview";
 
 // Company bookings (GET /bookings, needs BOOKING_VIEW). The price shown is the
 // one stored on the booking by the server when it was requested.
@@ -42,6 +43,7 @@ export default function CompanyBookingsPage() {
     const [cancelTarget, setCancelTarget] = useState(null);
     const [notice, setNotice] = useState(null);
     const [reschedule, setReschedule] = useState(null); // { booking, date }
+    const [review, setReview] = useState(null); // an aired spot to check
     const { user } = useSession();
     const paths = advertiserPaths(user);
 
@@ -206,8 +208,16 @@ export default function CompanyBookingsPage() {
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${badge.className}`}>{badge.label}</span>
+                                                    {booking.escrow && ESCROW_STATUS[booking.escrow.status] && (
+                                                        <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{ESCROW_STATUS[booking.escrow.status].label}</span>
+                                                    )}
                                                 </td>
                                                 <td className="px-4 py-3 text-right">
+                                                    {booking.escrow?.status === "AIRED" && (
+                                                        <button type="button" onClick={() => setReview(booking)} className="mr-3 rounded-lg bg-amber-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-600">
+                                                            Check &amp; confirm
+                                                        </button>
+                                                    )}
                                                     {booking.status === "CHANGES_REQUESTED" && (
                                                         <button type="button" onClick={() => openReschedule(booking)} disabled={busyId === booking._id} className="mr-3 text-xs font-medium text-emerald-600 hover:underline disabled:opacity-50 dark:text-emerald-400">
                                                             Reschedule
@@ -245,6 +255,12 @@ export default function CompanyBookingsPage() {
                                             <p className="text-slate-500 dark:text-slate-400">
                                                 {formatDate(booking.date)} · {booking.time} · {formatMoney(booking.price, booking.currency)} · {PAYMENT_LABEL[booking.paymentStatus || "UNPAID"]}
                                             </p>
+                                            {booking.escrow && ESCROW_STATUS[booking.escrow.status] && (
+                                                <p className="text-xs text-slate-500 dark:text-slate-400">{ESCROW_STATUS[booking.escrow.status].label}</p>
+                                            )}
+                                            {booking.escrow?.status === "AIRED" && (
+                                                <button type="button" onClick={() => setReview(booking)} className="w-full rounded-lg bg-amber-500 px-3 py-2 text-xs font-medium text-white">Check &amp; confirm the aired spot</button>
+                                            )}
                                             <div className="flex items-center justify-between">
                                                 <span className="font-mono text-xs text-slate-400">{booking.bookingReference}</span>
                                                 {booking.status === "CHANGES_REQUESTED" && (
@@ -265,6 +281,18 @@ export default function CompanyBookingsPage() {
                         </div>
                     )}
                 </div>
+            )}
+
+            {review && (
+                <AiredReview
+                    booking={review}
+                    onClose={() => setReview(null)}
+                    onDone={(text, updated) => {
+                        setBookings((prev) => prev.map((b) => (b._id === updated._id ? { ...b, escrow: updated.escrow } : b)));
+                        setReview(null);
+                        setNotice({ type: "success", text });
+                    }}
+                />
             )}
 
             {reschedule && (

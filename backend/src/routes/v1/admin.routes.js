@@ -352,6 +352,16 @@ const walletAdmin = require('../../controllers/wallet.controller');
 router.get('/wallets', walletAdmin.getAdminWallets);
 router.get('/wallets/:id/transactions', walletAdmin.getAdminWalletTransactions);
 router.post('/wallets/:id/adjust', walletAdmin.adjustWallet);
+
+// Money held until airing: disputes, payouts to media houses, settings.
+const settlementAdmin = require('../../controllers/settlement.controller');
+router.get('/disputes', settlementAdmin.getDisputes);
+router.post('/bookings/:id/resolve-dispute', settlementAdmin.resolveDispute);
+router.get('/payouts', settlementAdmin.getPayouts);
+router.post('/payouts/:id/paid', settlementAdmin.markPayoutPaid);
+router.post('/payouts/:id/decline', settlementAdmin.declinePayout);
+router.get('/settlement-settings', settlementAdmin.getSettings);
+router.patch('/settlement-settings', settlementAdmin.updateSettings);
 router.post('/subscriptions', assignSubscription);
 router.get('/plans', getAdminPlans);
 router.put('/plans/:code', updatePlan);

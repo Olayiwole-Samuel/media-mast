@@ -14,8 +14,9 @@ export default function WalletCard() {
     const { wallet, loading } = useWallet();
     const currency = wallet?.currency || "NGN";
     const funded = wallet?.totalFunded || 0;
-    const spent = Math.max(0, (wallet?.totalSpent || 0) - (wallet?.totalRefunded || 0));
-    const used = funded > 0 ? Math.min(100, Math.round((spent / funded) * 100)) : 0;
+    const spent = wallet?.totalSpent || 0;
+    const held = wallet?.held || 0;
+    const used = funded > 0 ? Math.min(100, Math.round(((spent + held) / funded) * 100)) : 0;
 
     return (
         <section className={`rounded-2xl border p-5 ${wallet?.isLow ? "border-red-300 bg-red-50/60 dark:border-red-500/30 dark:bg-red-500/5" : "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white dark:border-emerald-500/20 dark:from-emerald-500/10 dark:to-slate-900"}`}>
@@ -23,7 +24,7 @@ export default function WalletCard() {
                 <div className="flex items-center gap-3">
                     <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500 text-white"><WalletIcon className="h-5 w-5" /></span>
                     <div>
-                        <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Wallet balance</p>
+                        <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Wallet: available to book</p>
                         <p className="text-2xl font-bold text-slate-900 dark:text-white">{loading && !wallet ? "…" : formatMoney(wallet?.balance || 0, currency)}</p>
                     </div>
                 </div>
@@ -33,10 +34,11 @@ export default function WalletCard() {
                 </div>
             </div>
 
-            <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+            <div className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                 <div><p className="text-xs text-slate-500 dark:text-slate-400">Funded</p><p className="font-semibold text-slate-900 dark:text-white">{formatMoney(funded, currency)}</p></div>
-                <div><p className="text-xs text-slate-500 dark:text-slate-400">Spent</p><p className="font-semibold text-slate-900 dark:text-white">{formatMoney(spent, currency)}</p></div>
-                <div><p className="text-xs text-slate-500 dark:text-slate-400">Left</p><p className="font-semibold text-emerald-700 dark:text-emerald-300">{formatMoney(wallet?.balance || 0, currency)}</p></div>
+                <div><p className="text-xs text-slate-500 dark:text-slate-400">On hold (not aired yet)</p><p className="font-semibold text-amber-600 dark:text-amber-400">{formatMoney(held, currency)}</p></div>
+                <div><p className="text-xs text-slate-500 dark:text-slate-400">Spent (aired)</p><p className="font-semibold text-slate-900 dark:text-white">{formatMoney(spent, currency)}</p></div>
+                <div><p className="text-xs text-slate-500 dark:text-slate-400">Available</p><p className="font-semibold text-emerald-700 dark:text-emerald-300">{formatMoney(wallet?.balance || 0, currency)}</p></div>
             </div>
             <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800" aria-label={`${used}% of funds spent`}>
                 <div className={`h-full rounded-full ${wallet?.isLow ? "bg-red-500" : "bg-emerald-500"}`} style={{ width: `${used}%` }} />

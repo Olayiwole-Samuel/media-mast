@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
     Wallet as WalletIcon, Plus, Loader2, FlaskConical, ArrowDownLeft, ArrowUpRight, Undo2, SlidersHorizontal,
-    BellRing, AlertTriangle, CheckCircle2,
+    BellRing, AlertTriangle, CheckCircle2, Lock,
 } from "lucide-react";
 import { fundWallet, getWalletTransactions, updateWalletSettings } from "@/lib/api";
 import { useWallet, walletChanged } from "@/lib/wallet";
@@ -21,13 +21,15 @@ const QUICK = [100000, 500000, 1000000, 5000000];
 const FILTERS = [
     { value: "", label: "All" },
     { value: "FUND", label: "Top-ups" },
-    { value: "CHARGE", label: "Bookings" },
+    { value: "HOLD", label: "On hold" },
+    { value: "CHARGE", label: "Aired (paid)" },
     { value: "REFUND", label: "Refunds" },
     { value: "ADJUSTMENT", label: "Adjustments" },
 ];
 const TYPE = {
     FUND: { label: "Wallet top-up", icon: ArrowDownLeft, tone: "text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10 dark:text-emerald-400", sign: "+" },
-    CHARGE: { label: "Booking", icon: ArrowUpRight, tone: "text-slate-700 bg-slate-100 dark:bg-slate-800 dark:text-slate-200", sign: "−" },
+    HOLD: { label: "Booked: on hold until it airs", icon: Lock, tone: "text-amber-600 bg-amber-50 dark:bg-amber-500/10 dark:text-amber-400", sign: "−" },
+    CHARGE: { label: "Aired: paid to the media house", icon: ArrowUpRight, tone: "text-slate-700 bg-slate-100 dark:bg-slate-800 dark:text-slate-200", sign: "" },
     REFUND: { label: "Refund", icon: Undo2, tone: "text-sky-600 bg-sky-50 dark:bg-sky-500/10 dark:text-sky-400", sign: "+" },
     ADJUSTMENT: { label: "Adjustment", icon: SlidersHorizontal, tone: "text-violet-600 bg-violet-50 dark:bg-violet-500/10 dark:text-violet-400", sign: "" },
 };
@@ -129,7 +131,7 @@ export default function WalletView() {
                     <WalletIcon className="h-6 w-6 text-emerald-500" /> Wallet
                 </h1>
                 <p className="mt-1 text-slate-500 dark:text-slate-400">
-                    Fund your wallet any time. Every booking is paid from it, and refunds come straight back to it.
+                    Fund your wallet any time. When you book, the money is put on hold, and only spent once each spot airs. If a spot doesn&apos;t air, it comes back.
                 </p>
             </div>
 
@@ -154,10 +156,10 @@ export default function WalletView() {
             )}
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <Stat strong label="Balance" value={formatMoney(wallet?.balance || 0, currency)} hint="Available to book" />
-                <Stat label="Total funded" value={formatMoney(wallet?.totalFunded || 0, currency)} hint="All top-ups" />
-                <Stat label="Total spent" value={formatMoney(wallet?.totalSpent || 0, currency)} hint="Bookings paid from the wallet" />
-                <Stat label="Refunded" value={formatMoney(wallet?.totalRefunded || 0, currency)} hint="Declined or cancelled spots" />
+                <Stat strong label="Available" value={formatMoney(wallet?.balance || 0, currency)} hint="Ready to book" />
+                <Stat label="On hold" value={formatMoney(wallet?.held || 0, currency)} hint="Booked spots not aired yet: paid only once they air" />
+                <Stat label="Spent" value={formatMoney(wallet?.totalSpent || 0, currency)} hint="Spots that aired" />
+                <Stat label="Total funded" value={formatMoney(wallet?.totalFunded || 0, currency)} hint={`Refunded so far ${formatMoney(wallet?.totalRefunded || 0, currency)}`} />
             </div>
 
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -203,17 +205,18 @@ export default function WalletView() {
                     <p className="px-5 py-8 text-center text-sm text-slate-500">No bookings paid from the wallet yet.</p>
                 ) : (
                     <div className="overflow-x-auto">
-                        <table className="w-full min-w-[480px] text-sm">
+                        <table className="w-full min-w-[560px] text-sm">
                             <thead className="text-left text-xs text-slate-500 dark:text-slate-400">
-                                <tr><th className="px-5 py-2 font-medium">Campaign</th><th className="px-3 py-2 text-right font-medium">Spent</th><th className="px-3 py-2 text-right font-medium">Refunded</th><th className="px-5 py-2 text-right font-medium">Net</th></tr>
+                                <tr><th className="px-5 py-2 font-medium">Campaign</th><th className="px-3 py-2 text-right font-medium">Booked</th><th className="px-3 py-2 text-right font-medium">On hold</th><th className="px-3 py-2 text-right font-medium">Spent (aired)</th><th className="px-5 py-2 text-right font-medium">Refunded</th></tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                 {byCampaign.map((c) => (
                                     <tr key={String(c.campaignId)}>
                                         <td className="px-5 py-2.5 text-slate-800 dark:text-slate-100">{c.campaignName}</td>
-                                        <td className="px-3 py-2.5 text-right">{formatMoney(c.spent, currency)}</td>
-                                        <td className="px-3 py-2.5 text-right text-sky-600 dark:text-sky-400">{c.refunded ? formatMoney(c.refunded, currency) : "—"}</td>
-                                        <td className="px-5 py-2.5 text-right font-semibold text-slate-900 dark:text-white">{formatMoney(c.net, currency)}</td>
+                                        <td className="px-3 py-2.5 text-right">{formatMoney(c.booked, currency)}</td>
+                                        <td className="px-3 py-2.5 text-right text-amber-600 dark:text-amber-400">{c.onHold ? formatMoney(c.onHold, currency) : "—"}</td>
+                                        <td className="px-3 py-2.5 text-right font-semibold text-slate-900 dark:text-white">{formatMoney(c.spent, currency)}</td>
+                                        <td className="px-5 py-2.5 text-right text-sky-600 dark:text-sky-400">{c.refunded ? formatMoney(c.refunded, currency) : "—"}</td>
                                     </tr>
                                 ))}
                             </tbody>

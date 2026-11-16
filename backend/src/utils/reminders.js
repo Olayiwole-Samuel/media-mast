@@ -58,4 +58,18 @@ const runReminders = async (now = new Date()) => {
     return { checked: candidates.length, ...sent };
 };
 
-module.exports = { runReminders, REMINDER_STATUSES };
+// Money held until airing: pay out spots whose dispute window has passed,
+// chase media houses that haven't confirmed, settle closed holds.
+const runSettlementJob = async (now = new Date()) => {
+    const escrow = require('./escrow');
+    const { notifyAirOverdue, notifyStationEarning } = require('./notifications');
+    const before = await Booking.find({ 'escrow.status': 'AIRED', 'escrow.releaseAt': { $lte: now } }).select('_id');
+    const result = await escrow.runSettlement(now, { notifyOverdue: notifyAirOverdue });
+    for (const { _id } of before) {
+        const b = await Booking.findById(_id);
+        if (b && b.escrow?.status === 'RELEASED') await notifyStationEarning(b, b.escrow.stationAmount);
+    }
+    return result;
+};
+
+module.exports = { runReminders, runSettlementJob, REMINDER_STATUSES };

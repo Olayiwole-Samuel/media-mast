@@ -50,6 +50,7 @@ const {
 const round2 = (n) => Math.round(n * 100) / 100;
 const formatNaira = (n) => `₦${Number(n || 0).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
 const { walletPaymentsEnabled } = require('../utils/wallet');
+const { holdBookings } = require('../utils/escrow');
 
 // A rate-card slot (belt, programme or placement) regardless of spot length:
 // the 60s, 45s, 30s… rates of "Run of spot 05:00–16:00" share one key.
@@ -540,6 +541,13 @@ const checkout = async (req, res) => {
                 paymentReference: payment.reference,
             },
         });
+    }
+
+    // Wallet bookings: each spot's money is held until it airs.
+    try {
+        await holdBookings(payment, bookings);
+    } catch (error) {
+        console.error('❌ Could not record held amounts:', error.name, error.message);
     }
 
     await notifyCheckout({ payment, bookings });

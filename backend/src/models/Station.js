@@ -308,6 +308,13 @@ const StationSchema = new mongoose.Schema(
             default: null,
         },
 
+        // Where its earnings are paid (payout requests snapshot this).
+        payoutAccount: {
+            bankName: { type: String, default: null },
+            accountNumber: { type: String, default: null },
+            accountName: { type: String, default: null },
+        },
+
         // Station managers (STATION accounts created by admins) who run this
         // station's desk: bookings, prices, calendar. A manager can be
         // assigned to many stations and a station can have many managers.

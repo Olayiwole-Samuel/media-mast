@@ -9,6 +9,8 @@ const Payment = require('../models/Payment');
 const AuditLog = require('../models/AuditLog');
 const { advertiserScope, advertiserOwner } = require('../utils/advertiser');
 const { getRefundProviderFor } = require('../utils/payments');
+const escrow = require('../utils/escrow');
+const { notifyDisputeOpened, notifyStationEarning } = require('../utils/notifications');
 const { stationOwnerFilter, ownsStation } = require('../utils/stationOperator');
 const { checkStationCalendar } = require('../utils/stationCalendar');
 const { quoteCancellation, paidValueOf, airTimeOf, canStillCancel, CANCEL_CUTOFF_HOURS } = require('../utils/cancellationPolicy');
@@ -389,6 +391,19 @@ const customerRefundFields = (booking, quote) => {
 };
 
 const recordBookingRefund = async (req, booking, reason) => {
+    try {
+        await refundThroughProvider(req, booking, reason);
+    } finally {
+        // Wallet bookings: note it on the hold; any rest (a late-cancellation
+        // fee) is paid to the media house.
+        if (booking.escrow) {
+            const refunded = booking.paymentStatus === 'REFUNDED' ? Math.round((Number(booking.refundAmount) || 0) * 100) / 100 : 0;
+            await escrow.afterBookingRefund(booking._id, refunded).catch((e) => console.error('❌ Hold settlement failed:', e.name, e.message));
+        }
+    }
+};
+
+const refundThroughProvider = async (req, booking, reason) => {
     const amount = Math.round((Number(booking.refundAmount) || 0) * 100) / 100;
     if (booking.paymentStatus !== 'REFUNDED' || !booking.paymentId || amount <= 0) return;
 
@@ -396,7 +411,7 @@ const recordBookingRefund = async (req, booking, reason) => {
         const payment = await Payment.findById(booking.paymentId);
         if (!payment) return;
 
-        const result = await getRefundProviderFor(payment).refund({ payment, amount, reason });
+        const result = await getRefundProviderFor(payment).refund({ payment, amount, reason, bookingId: booking._id });
 
         const updated = await Payment.findOneAndUpdate(
             { _id: payment._id },
@@ -1022,14 +1037,127 @@ const spotHasAired = (booking, now = new Date()) =>
 
 // Completion needs the spot to have aired. Broadcast proof is optional for
 // now (the proof endpoint still records a link if a station sends one).
-const completeBooking = stationAction({
+const completeAired = stationAction({
     toStatus: 'COMPLETED',
     auditAction: 'COMPLETE_BOOKING',
-    message: 'Booking completed',
+    message: 'Marked as aired',
     beforeApply: (booking) => {
         return spotHasAired(booking) ? null : 'This spot has not aired yet. Mark it as aired after its time slot has ended.';
     },
 });
+
+// Mark aired. A wallet booking (money held until it airs) needs proof: the
+// station's TX log and a clip of the spot on air. The advertiser then has the
+// dispute window to raise a problem before the money is paid to the station.
+const completeBooking = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) return invalidBookingId(res);
+        const booking = await Booking.findById(req.params.id);
+        if (!booking || booking.escrow?.status !== 'HELD') return completeAired(req, res);
+
+        const station = await Station.findById(booking.stationId).select('managerIds companyId');
+        if (!station || !ownsStation(req, station)) return res.status(404).json({ success: false, message: 'Booking not found' });
+        if (!canTransitionBookingStatus('STATION', booking.status, 'COMPLETED')) {
+            return res.status(400).json({ success: false, message: `Cannot change booking status from ${booking.status} to COMPLETED` });
+        }
+        if (!spotHasAired(booking)) {
+            return res.status(400).json({ success: false, message: 'This spot has not aired yet. Mark it as aired after its time slot has ended.' });
+        }
+        const { logUploadId, clipUploadId } = req.body || {};
+        if (!logUploadId || !clipUploadId) {
+            return res.status(400).json({ success: false, code: 'PROOF_REQUIRED', message: 'Upload the TX log and a clip of the spot on air to mark it aired.' });
+        }
+        const log = await uploads.claimUpload(req.user, logUploadId, 'PROOF_LOG');
+        if (log.error) return res.status(400).json({ success: false, message: `TX log: ${log.error}` });
+        const clip = await uploads.claimUpload(req.user, clipUploadId, 'PROOF_CLIP');
+        if (clip.error) return res.status(400).json({ success: false, message: `Clip: ${clip.error}` });
+        const note = typeof req.body.note === 'string' ? req.body.note.trim().slice(0, 1000) || null : null;
+
+        await escrow.markAired(booking, {
+            logFileId: log.file.fileId, logName: log.file.name, clipFileId: clip.file.fileId, clipName: clip.file.name, note,
+        });
+        return completeAired(req, res);
+    } catch (error) {
+        console.error('❌ Mark aired error:', error.name, error.message);
+        return res.status(500).json({ success: false, message: 'Failed to mark the spot as aired' });
+    }
+};
+
+// The media house could not air the spot: the advertiser gets it all back.
+const markNotAired = stationAction({
+    toStatus: 'NOT_AIRED',
+    auditAction: 'UPDATE_BOOKING',
+    message: 'Marked as not aired: the advertiser has been refunded',
+    withNote: true,
+});
+
+// ── Advertiser: the spot was marked aired ──
+
+// Happy with it: pay the media house now instead of waiting for the window.
+const confirmAired = async (req, res) => {
+    try {
+        const booking = await loadOwnBooking(req, res);
+        if (!booking) return undefined;
+        if (booking.escrow?.status !== 'AIRED') {
+            return res.status(400).json({ success: false, message: 'Only a spot marked aired and not yet paid out can be confirmed' });
+        }
+        const released = await escrow.releaseBooking(booking._id, { note: `Confirmed by the advertiser: ${booking.bookingReference}` });
+        if (!released) return res.status(409).json({ success: false, message: 'This spot changed; reload and try again' });
+        await notifyStationEarning(released.booking, released.stationAmount);
+        return res.json({ success: true, message: 'Thanks. The media house has been paid for this spot.' });
+    } catch (error) {
+        console.error('❌ Confirm aired error:', error.name, error.message);
+        return res.status(500).json({ success: false, message: 'Failed to confirm' });
+    }
+};
+
+// Something went wrong: hold the money for an admin to decide.
+const disputeBooking = async (req, res) => {
+    try {
+        const booking = await loadOwnBooking(req, res);
+        if (!booking) return undefined;
+        const reason = String(req.body?.reason || '').toUpperCase();
+        const details = typeof req.body?.details === 'string' ? req.body.details.trim().slice(0, 2000) : '';
+        if (!details) return res.status(400).json({ success: false, message: 'Tell us what went wrong' });
+        const result = await escrow.openDispute(booking, { reason, details });
+        if (result.error) return res.status(400).json({ success: false, message: result.error });
+        await notifyDisputeOpened(booking, { reason, details });
+        return res.json({ success: true, message: 'Dispute raised. The money stays on hold while our team reviews it.' });
+    } catch (error) {
+        console.error('❌ Dispute error:', error.name, error.message);
+        return res.status(500).json({ success: false, message: 'Failed to raise the dispute' });
+    }
+};
+
+// The TX log or clip: for the advertiser who booked, the media house, or an admin.
+const getBookingProof = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) return invalidBookingId(res);
+        const booking = await Booking.findById(req.params.id).select('stationId companyId userId escrow');
+        const proof = booking?.escrow?.proof;
+        let allowed = false;
+        if (booking) {
+            const u = req.user;
+            if (u.accountType === 'ADMIN') allowed = true;
+            else if (u.accountType === 'INDIVIDUAL') allowed = !booking.companyId && String(booking.userId) === String(u._id);
+            else if (u.accountType === 'COMPANY' && booking.companyId && String(booking.companyId) === String(u.companyId)) allowed = true;
+            if (!allowed && ['STATION', 'COMPANY'].includes(u.accountType)) {
+                const station = await Station.findById(booking.stationId).select('managerIds companyId');
+                allowed = !!station && (
+                    (u.accountType === 'STATION' && (station.managerIds || []).some((m) => String(m) === String(u._id)))
+                    || (u.accountType === 'COMPANY' && station.companyId && String(station.companyId) === String(u.companyId))
+                );
+            }
+        }
+        if (!allowed) return res.status(404).json({ success: false, message: 'Booking not found' });
+        const fileId = req.query.which === 'clip' ? proof?.clipFileId : proof?.logFileId;
+        if (!fileId) return res.status(404).json({ success: false, message: 'No proof has been uploaded for this spot' });
+        return uploads.sendFile(res, 'proofs', fileId, { download: req.query.download === '1' });
+    } catch (error) {
+        console.error('❌ Booking proof error:', error.name, error.message);
+        return res.status(500).json({ success: false, message: 'Could not load the proof' });
+    }
+};
 
 // ── Station: record broadcast proof (status unchanged) ──
 const uploadBookingProof = async (req, res) => {
@@ -1460,6 +1588,10 @@ module.exports = {
     scheduleBooking,
     uploadBookingProof,
     completeBooking,
+    markNotAired,
+    confirmAired,
+    disputeBooking,
+    getBookingProof,
     // Shared with checkout (controllers/payment.controller.js)
     bookingHelpers: {
         validateBookingFields,

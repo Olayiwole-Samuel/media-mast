@@ -37,8 +37,10 @@ const BOOKING_STATUS_TRANSITIONS = {
 
     STATION: {
         PENDING: ['ACCEPTED', 'REJECTED', 'CHANGES_REQUESTED'],
-        ACCEPTED: ['SCHEDULED'],
-        SCHEDULED: ['COMPLETED'],
+        // A media house may mark an accepted spot aired straight away, or say
+        // it could not air it (refunded in full).
+        ACCEPTED: ['SCHEDULED', 'COMPLETED', 'NOT_AIRED'],
+        SCHEDULED: ['COMPLETED', 'NOT_AIRED'],
     },
 };
 
@@ -49,7 +51,7 @@ const canTransitionBookingStatus = (actor, fromStatus, toStatus) =>
 // A booking holds its station time from creation until it is rejected or
 // cancelled. CHANGES_REQUESTED keeps the hold (the same booking is
 // resubmitted), and COMPLETED keeps it because that airtime was used.
-const INVENTORY_RELEASING_STATUSES = ['REJECTED', 'CANCELLED'];
+const INVENTORY_RELEASING_STATUSES = ['REJECTED', 'CANCELLED', 'NOT_AIRED'];
 
 const INVENTORY_HOLDING_STATUSES = BOOKING_STATUSES.filter(
     (status) => !INVENTORY_RELEASING_STATUSES.includes(status)

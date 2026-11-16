@@ -112,6 +112,8 @@ const BookingSchema = new mongoose.Schema(
                 'SCHEDULED',
                 'COMPLETED',
                 'CANCELLED',
+                // The media house could not air the spot: refunded in full.
+                'NOT_AIRED',
             ],
             default: 'PENDING',
         },
@@ -123,6 +125,46 @@ const BookingSchema = new mongoose.Schema(
 
         stationNote: {
             type: String,
+            default: null,
+        },
+
+        // ── Money held until the spot airs (wallet bookings) ──
+        // HELD      paid from the wallet, waiting for the spot to air
+        // AIRED     media house confirmed it aired (with TX log + clip); the
+        //           advertiser can dispute until releaseAt, then it's paid out
+        // DISPUTED  the advertiser raised a problem; an admin decides
+        // RELEASED  paid to the media house (aired, confirmed or not disputed)
+        // REFUNDED  returned to the advertiser's wallet (declined, not aired, upheld dispute)
+        // SPLIT     part paid to the media house, part refunded (admin decision)
+        escrow: {
+            type: new mongoose.Schema({
+                status: { type: String, enum: ['HELD', 'AIRED', 'DISPUTED', 'RELEASED', 'REFUNDED', 'SPLIT'], default: 'HELD' },
+                amount: { type: Number, default: 0 },          // what the advertiser paid for this spot (incl. VAT)
+                refunded: { type: Number, default: 0 },        // returned to the advertiser
+                released: { type: Number, default: 0 },        // taken from the advertiser for the media house
+                stationAmount: { type: Number, default: 0 },   // credited to the media house (after VAT and commission)
+                commission: { type: Number, default: 0 },
+                vat: { type: Number, default: 0 },
+                airedAt: { type: Date, default: null },
+                releaseAt: { type: Date, default: null },      // end of the dispute window
+                settledAt: { type: Date, default: null },
+                overdueAlertedAt: { type: Date, default: null },
+                proof: {
+                    logFileId: { type: mongoose.Schema.Types.ObjectId, default: null },
+                    logName: { type: String, default: null },
+                    clipFileId: { type: mongoose.Schema.Types.ObjectId, default: null },
+                    clipName: { type: String, default: null },
+                    note: { type: String, default: null, maxlength: 1000 },
+                },
+                dispute: {
+                    reason: { type: String, default: null },
+                    details: { type: String, default: null, maxlength: 2000 },
+                    openedAt: { type: Date, default: null },
+                    resolvedAt: { type: Date, default: null },
+                    outcome: { type: String, enum: ['RELEASE', 'REFUND', 'SPLIT', null], default: null },
+                    resolution: { type: String, default: null, maxlength: 1000 },
+                },
+            }, { _id: false }),
             default: null,
         },
 
