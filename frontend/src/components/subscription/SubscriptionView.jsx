@@ -21,9 +21,9 @@ const formatStorage = (mb) => (mb >= 1024 ? `${Math.round((mb / 1024) * 10) / 10
 const INCLUDED = [
     "Book any approved TV, radio, press and billboard station",
     "Prices straight from each station's rate card, plus VAT",
-    "5% off with 3+ stations in one checkout, 10% with 5+",
+    "Negotiated volume discounts on every media house",
+    "15% agency commission for media agencies",
     "1 GB of document storage",
-    "Team logins with permissions",
 ];
 
 const ENTERPRISE = [

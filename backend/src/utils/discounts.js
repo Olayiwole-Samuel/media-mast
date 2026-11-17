@@ -1,9 +1,10 @@
 // ─────────────────────────────────────────────────────────────
 // CHECKOUT DISCOUNTS
 //
-// Booking across several stations in one checkout earns a discount on the
-// spots' list prices: by default 5% for 3+ stations and 10% for 5+.
-// Override with MULTI_STATION_DISCOUNTS="3:5,5:10" (min stations:percent).
+// Switched off: admin-set volume discounts (utils/mediaPlan.js) replace it.
+// With MULTI_STATION_DISCOUNTS_ENABLED=true, booking across several stations
+// in one checkout earns 5% for 3+ stations and 10% for 5+ (override with
+// MULTI_STATION_DISCOUNTS="3:5,5:10", min stations:percent).
 // A subscription plan can add its own percentage on top (planPercent).
 // The total is capped at MAX_DISCOUNT_PERCENT.
 // ─────────────────────────────────────────────────────────────
@@ -27,7 +28,8 @@ const parseTiers = (raw) => {
 };
 
 // Invalid configuration falls back to the defaults rather than failing checkout.
-const getDiscountTiers = () => parseTiers(process.env.MULTI_STATION_DISCOUNTS) || DEFAULT_TIERS;
+const multiStationEnabled = () => String(process.env.MULTI_STATION_DISCOUNTS_ENABLED || '').trim().toLowerCase() === 'true';
+const getDiscountTiers = () => (multiStationEnabled() ? parseTiers(process.env.MULTI_STATION_DISCOUNTS) || DEFAULT_TIERS : []);
 
 const multiStationPercent = (stationCount, tiers = getDiscountTiers()) =>
     tiers.reduce((best, t) => (stationCount >= t.minStations ? Math.max(best, t.percent) : best), 0);

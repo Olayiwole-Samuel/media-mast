@@ -38,6 +38,8 @@ const airTimeOf = (booking) => {
 // any multi-station discount and the platform fee are both reflected.
 // Payment may be null for unpaid bookings.
 const paidValueOf = (booking, payment) => {
+    // Media plan spots record exactly what was paid (discounts differ per line).
+    if (booking.escrow && Number(booking.escrow.amount) > 0) return round2(Number(booking.escrow.amount));
     const price = Number(booking.price) || 0;
     const subtotal = Number(payment?.subtotal) || 0;
     const amount = Number(payment?.amount);

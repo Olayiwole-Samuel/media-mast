@@ -128,6 +128,24 @@ const BookingSchema = new mongoose.Schema(
             default: null,
         },
 
+        // Media plan price of this spot: rate card (gross) − volume discount −
+        // agency commission (agencies) = net, + VAT = total.
+        pricing: {
+            type: new mongoose.Schema({
+                gross: Number,
+                volumeDiscountPercent: Number,
+                volumeDiscount: Number,
+                agencyCommissionPercent: Number,
+                agencyCommission: Number,
+                net: Number,
+                vatPercent: Number,
+                vat: Number,
+                total: Number,
+                planLine: Number,
+            }, { _id: false }),
+            default: null,
+        },
+
         // ── Money held until the spot airs (wallet bookings) ──
         // HELD      paid from the wallet, waiting for the spot to air
         // AIRED     media house confirmed it aired (with TX log + clip); the

@@ -1,36 +1,31 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
-    Loader2, ShoppingCart, ShieldCheck, Search, Tv, Radio, Newspaper, Monitor, Image as BillboardIcon,
-    ChevronDown, ChevronUp, CalendarDays, Check, AlertTriangle, MapPin, Wallet as WalletIcon,
+    Loader2, ShieldCheck, Search, Tv, Radio, Newspaper, Monitor, Image as BillboardIcon,
+    ChevronDown, ChevronUp, CalendarDays, AlertTriangle, MapPin, Wallet as WalletIcon, Trash2, CheckCircle2, ListChecks,
 } from "lucide-react";
-import { getCampaigns, getStations, getCreatives, getStationAvailability } from "@/lib/api";
-import { calendarProblem } from "@/lib/stationCalendar";
+import { getCampaigns, getStations, getCreatives, quoteMediaPlan, checkoutMediaPlan } from "@/lib/api";
 import { formatMoney } from "@/lib/status";
 import { useSession } from "@/lib/auth";
-import { useCart, advertiserPaths, MAX_CART_ITEMS } from "@/lib/cart";
-import { useCheckoutDiscount, discountPercentFor } from "@/lib/discounts";
-import { useWallet } from "@/lib/wallet";
-import { daysLabel, soldOn, fieldsFromRate, groupRates, cardLengths, groupWhen, weekdayOf, slotKey } from "@/lib/rates";
+import { advertiserPaths } from "@/lib/cart";
+import { useWallet, walletChanged } from "@/lib/wallet";
+import { daysLabel, groupRates, cardLengths, groupWhen, programmeKey } from "@/lib/rates";
 
 // ─────────────────────────────────────────────────────────────
-// Book airtime: one page, many media houses.
+// Book airtime = build a media plan for the campaign's whole period.
 //
-//   1. Pick the campaign (its air date is the booking date) and the advert.
-//   2. Tick the slots you want on as many TV, radio and press houses as
-//      you like: each station shows its full rate card, belt or programme
-//      down the side and spot length (60/45/30/15/5 s) across the top.
-//      One length per belt or programme: tick 60s and that row's 30s etc. lock.
-//   3. Add them all to the cart and pay once.
-//
-// Each media house then confirms the date or asks to reschedule.
-// Prices are the rate card's; the server prices everything again at checkout.
+//   1. Campaign (its start and end dates) and the advert.
+//   2. Tick slots on as many media houses as you like (rate card grids).
+//   3. For each line: the days it airs (e.g. Thursdays) and spots per day,
+//      across the campaign, or a shorter range inside it.
+//   4. The plan is priced like an agency plan: rate card − volume discount −
+//      15% agency commission (agencies) = net + 7.5% VAT; the whole plan is
+//      held in the wallet and each media house is paid as its spots air.
 // ─────────────────────────────────────────────────────────────
 
-const VAT_PERCENT = 7.5;
 const CLOSED_CAMPAIGN = ["CANCELLED", "COMPLETED", "EXPIRED", "REFUNDED", "FAILED", "REJECTED"];
 const TYPES = [
     { value: "ALL", label: "All media" },
@@ -40,17 +35,13 @@ const TYPES = [
     { value: "BILLBOARD", label: "Billboards" },
     { value: "DIGITAL", label: "Digital" },
 ];
-const DAY_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-
-const todayLocal = () => {
-    const d = new Date();
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
+const DAY_CHIPS = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [0, "Sun"]];
 const dateOnly = (v) => (v ? String(v).slice(0, 10) : "");
-const prettyDate = (d) => (d ? `${DAY_LONG[weekdayOf(d)]}, ${new Date(`${d}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })}` : "");
+const prettyDate = (d) => (d ? new Date(`${d}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "");
 const isBookableAdvert = (c) => c.status === "APPROVED" && c.fileId && c.arcon?.fileId;
 const activeRates = (s) => (s.rateCard || []).filter((r) => r && r.isActive !== false && Number(r.price) > 0);
+const selectClass = "w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white";
+const smallInput = "rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white";
 
 function TypeIcon({ type, className }) {
     if (type === "TV") return <Tv className={className} />;
@@ -60,11 +51,8 @@ function TypeIcon({ type, className }) {
     return <Radio className={className} />;
 }
 
-const selectClass =
-    "w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white";
-
-// One media house with its rate card as a grid of tick boxes.
-function StationRates({ station, date, picked, inCart, takenSlots, onToggle, open, onOpenChange, advertSeconds, availability }) {
+// One media house: its rate card as tick boxes (a tick adds a plan line).
+function StationRates({ station, lines, onToggle, open, onOpenChange, advertSeconds }) {
     const rates = activeRates(station);
     const groups = groupRates(rates);
     const lengths = cardLengths(rates);
@@ -72,38 +60,25 @@ function StationRates({ station, date, picked, inCart, takenSlots, onToggle, ope
     const currency = station.pricing?.currency || "NGN";
     const fromPrice = rates.length ? Math.min(...rates.map((r) => Number(r.price))) : null;
     const place = [station.location?.city, station.location?.state].filter(Boolean).join(", ");
-    const count = rates.filter((r) => picked.has(r._id)).length;
+    const mine = lines.filter((l) => l.stationId === station._id);
+    const pickedRate = new Set(mine.map((l) => l.rateId));
+    const pickedProgramme = new Map(mine.map((l) => [l.programme, l.rateId]));
 
     const cell = (rate) => {
         if (!rate) return <span className="text-slate-300 dark:text-slate-600">—</span>;
-        const timing = fieldsFromRate(station, rate);
-        const offDay = !soldOn(rate, date);
-        const blocked = !offDay && date ? calendarProblem(availability, date, timing.time, timing.duration) : "";
-        const already = inCart.has(rate._id);
-        const checked = picked.has(rate._id);
-        // Another length of this belt/programme is ticked or in the cart.
-        const taken = takenSlots.get(`${station._id}|${slotKey(rate)}`);
-        const otherLength = !checked && !already && taken && taken.rateId !== rate._id ? taken : null;
-        const disabled = offDay || !!blocked || already || !!otherLength;
-        const title = offDay ? `Only sold ${daysLabel(rate.days)}`
-            : blocked || (already ? "Already in your cart for this date"
-                : otherLength ? `One length per slot: you have the ${otherLength.seconds ? `${otherLength.seconds}s` : "other"} spot${otherLength.inCart ? " in your cart" : ""}. Untick it to change.` : undefined);
+        const checked = pickedRate.has(rate._id);
+        const other = !checked && pickedProgramme.has(programmeKey(rate));
         return (
-            <label title={title} className={`inline-flex min-w-[6.5rem] cursor-pointer items-center justify-end gap-2 rounded-lg border px-2 py-1.5 transition-colors ${
-                disabled ? "cursor-not-allowed border-transparent opacity-40"
-                    : checked ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10"
-                        : "border-slate-200 hover:border-emerald-300 dark:border-slate-700"
-            }`}>
-                <span className={`text-xs font-medium ${checked ? "text-emerald-800 dark:text-emerald-200" : "text-slate-700 dark:text-slate-200"}`}>
-                    {already ? "In cart" : otherLength ? "—" : formatMoney(rate.price, currency)}
-                </span>
-                <input type="checkbox" className="h-4 w-4 accent-emerald-600" checked={checked} disabled={disabled} onChange={() => onToggle(station, rate)} />
+            <label title={other ? "One spot length per programme: untick the other length first" : undefined}
+                className={`inline-flex min-w-[6.5rem] cursor-pointer items-center justify-end gap-2 rounded-lg border px-2 py-1.5 transition-colors ${other ? "cursor-not-allowed border-transparent opacity-40" : checked ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10" : "border-slate-200 hover:border-emerald-300 dark:border-slate-700"}`}>
+                <span className={`text-xs font-medium ${checked ? "text-emerald-800 dark:text-emerald-200" : "text-slate-700 dark:text-slate-200"}`}>{other ? "—" : formatMoney(rate.price, currency)}</span>
+                <input type="checkbox" className="h-4 w-4 accent-emerald-600" checked={checked} disabled={other} onChange={() => onToggle(station, rate)} />
             </label>
         );
     };
 
     return (
-        <div className={`overflow-hidden rounded-2xl border bg-white dark:bg-slate-900 ${count ? "border-emerald-400 dark:border-emerald-500/60" : "border-slate-200 dark:border-slate-800"}`}>
+        <div className={`overflow-hidden rounded-2xl border bg-white dark:bg-slate-900 ${mine.length ? "border-emerald-400 dark:border-emerald-500/60" : "border-slate-200 dark:border-slate-800"}`}>
             <button type="button" onClick={() => onOpenChange(!open)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50" aria-expanded={open}>
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-emerald-500/10">
                     {station.logo
@@ -119,12 +94,11 @@ function StationRates({ station, date, picked, inCart, takenSlots, onToggle, ope
                         {fromPrice != null ? ` · from ${formatMoney(fromPrice, currency)}` : ""}
                     </span>
                 </span>
-                {count > 0 && <span className="rounded-full bg-emerald-500 px-2.5 py-0.5 text-xs font-semibold text-white">{count} picked</span>}
+                {mine.length > 0 && <span className="rounded-full bg-emerald-500 px-2.5 py-0.5 text-xs font-semibold text-white">{mine.length} in plan</span>}
                 <span className="flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
                     {open ? <>Hide rates <ChevronUp className="h-4 w-4" /></> : <>See rates <ChevronDown className="h-4 w-4" /></>}
                 </span>
             </button>
-
             {open && (
                 <div className="border-t border-slate-100 dark:border-slate-800">
                     <div className="overflow-x-auto">
@@ -134,9 +108,7 @@ function StationRates({ station, date, picked, inCart, takenSlots, onToggle, ope
                                     <th className="px-4 py-2 font-medium">{station.type === "PRESS" ? "Placement" : "Belt / programme"}</th>
                                     <th className="px-3 py-2 font-medium">When</th>
                                     {lengths.map((l) => (
-                                        <th key={l} className={`px-3 py-2 text-right font-medium ${advertSeconds && l === advertSeconds ? "text-emerald-700 dark:text-emerald-300" : ""}`}>
-                                            {l}s{advertSeconds && l === advertSeconds ? " · your advert" : ""}
-                                        </th>
+                                        <th key={l} className={`px-3 py-2 text-right font-medium ${advertSeconds && l === advertSeconds ? "text-emerald-700 dark:text-emerald-300" : ""}`}>{l}s{advertSeconds && l === advertSeconds ? " · your advert" : ""}</th>
                                     ))}
                                     {(singles || !lengths.length) && <th className="px-3 py-2 text-right font-medium">{station.type === "PRESS" ? "Per insertion" : "Price"}</th>}
                                 </tr>
@@ -147,7 +119,7 @@ function StationRates({ station, date, picked, inCart, takenSlots, onToggle, ope
                                     return (
                                         <tr key={g.key}>
                                             <td className="px-4 py-2 text-slate-800 dark:text-slate-100">{g.name}</td>
-                                            <td className="px-3 py-2 text-xs text-slate-500 dark:text-slate-400">{groupWhen(g)}{days ? ` · ${days}` : ""}</td>
+                                            <td className="px-3 py-2 text-xs text-slate-500 dark:text-slate-400">{groupWhen(g)}{days ? ` · ${days} only` : ""}</td>
                                             {lengths.map((l) => <td key={l} className="px-3 py-1.5 text-right">{cell(g.options.find((o) => o.spotSeconds === l))}</td>)}
                                             {(singles || !lengths.length) && <td className="px-3 py-1.5 text-right">{cell(g.options.find((o) => !o.spotSeconds))}</td>}
                                         </tr>
@@ -156,22 +128,68 @@ function StationRates({ station, date, picked, inCart, takenSlots, onToggle, ope
                             </tbody>
                         </table>
                     </div>
-                    <p className="px-4 py-2 text-xs text-slate-400">
-                        Prices per {station.type === "PRESS" ? "insertion" : "spot"}, before {VAT_PERCENT}% VAT. One spot length per belt or programme; faded boxes aren&apos;t available on your air date.
-                    </p>
+                    <p className="px-4 py-2 text-xs text-slate-400">Rate card prices per {station.type === "PRESS" ? "insertion" : "spot"}. Tick a slot to add it to your plan, then choose its days below.</p>
                 </div>
             )}
         </div>
     );
 }
 
+// One plan line: days it airs, spots per day, optional date range; its price from the quote.
+function PlanLine({ line, quote, error, campaignStart, campaignEnd, onChange, onRemove }) {
+    const soldDays = line.rateDays?.length ? new Set(line.rateDays) : null;
+    const toggleDay = (d) => onChange({ days: line.days.includes(d) ? line.days.filter((x) => x !== d) : [...line.days, d] });
+    return (
+        <li className={`rounded-xl border p-3 ${error ? "border-red-300 dark:border-red-500/40" : "border-slate-200 dark:border-slate-800"}`}>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                    <p className="font-medium text-slate-900 dark:text-white">{line.stationName} · {line.rateName}{line.spotSeconds ? ` · ${line.spotSeconds}s` : ""}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{line.when}{soldDays ? ` · sold ${daysLabel(line.rateDays)} only` : ""}</p>
+                </div>
+                <button type="button" onClick={onRemove} className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10" aria-label="Remove line"><Trash2 className="h-4 w-4" /></button>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {DAY_CHIPS.map(([d, label]) => {
+                    const off = soldDays && !soldDays.has(d);
+                    const on = line.days.includes(d);
+                    return (
+                        <button key={d} type="button" disabled={off} onClick={() => toggleDay(d)}
+                            className={`rounded-full px-2.5 py-1 text-xs font-medium ${off ? "cursor-not-allowed bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600" : on ? "bg-emerald-500 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"}`}>
+                            {label}
+                        </button>
+                    );
+                })}
+                <label className="ml-2 flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
+                    <input type="number" min={1} max={20} value={line.spotsPerDay} onChange={(e) => onChange({ spotsPerDay: Math.max(1, Math.min(20, Number(e.target.value) || 1)) })} className={`${smallInput} w-16`} />
+                    spot{line.spotsPerDay === 1 ? "" : "s"} a day
+                </label>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                <span>From</span>
+                <input type="date" value={line.startDate || ""} min={campaignStart} max={campaignEnd} onChange={(e) => onChange({ startDate: e.target.value })} className={smallInput} />
+                <span>to</span>
+                <input type="date" value={line.endDate || ""} min={campaignStart} max={campaignEnd} onChange={(e) => onChange({ endDate: e.target.value })} className={smallInput} />
+                {(line.startDate || line.endDate) && <button type="button" onClick={() => onChange({ startDate: "", endDate: "" })} className="text-emerald-600 hover:underline">whole campaign</button>}
+            </div>
+            {error ? (
+                <p className="mt-2 text-xs font-medium text-red-600 dark:text-red-400">{error}</p>
+            ) : quote ? (
+                <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
+                    <span className="font-semibold text-slate-900 dark:text-white">{quote.spots} spots</span> ({quote.airingDays} day{quote.airingDays === 1 ? "" : "s"}, {prettyDate(quote.firstDate)} to {prettyDate(quote.lastDate)})
+                    {" · "}{formatMoney(quote.unit.gross)} − {quote.unit.volumeDiscountPercent}% vol.{quote.unit.agencyCommissionPercent ? ` − ${quote.unit.agencyCommissionPercent}% agency` : ""} = <span className="font-semibold">{formatMoney(quote.unit.net)}</span> net + VAT
+                    {" · "}<span className="font-semibold text-slate-900 dark:text-white">{formatMoney(quote.totals.total)}</span>
+                    {quote.skippedCount > 0 && <span className="block text-amber-700 dark:text-amber-300">{quote.skippedCount} date{quote.skippedCount === 1 ? "" : "s"} skipped (media house unavailable).</span>}
+                </div>
+            ) : null}
+        </li>
+    );
+}
+
 export default function BookingPage() {
-    const router = useRouter();
     const params = useSearchParams();
     const { user } = useSession();
     const paths = advertiserPaths(user);
-    const cart = useCart();
-    const discountOptions = useCheckoutDiscount();
+    const { balance } = useWallet();
 
     const [campaigns, setCampaigns] = useState(null);
     const [stations, setStations] = useState([]);
@@ -179,16 +197,17 @@ export default function BookingPage() {
     const [campaignId, setCampaignId] = useState(params.get("campaign") || "");
     const [creatives, setCreatives] = useState(null);
     const [creativeId, setCreativeId] = useState("");
-    const [airDate, setAirDate] = useState("");
-    const [picked, setPicked] = useState(() => new Map()); // rateId → { station, rate }
+    const [lines, setLines] = useState([]);
     const [openIds, setOpenIds] = useState(() => new Set(params.get("station") ? [params.get("station")] : []));
-    const [availability, setAvailability] = useState({}); // stationId → calendar
     const [type, setType] = useState("ALL");
     const [region, setRegion] = useState("ALL");
     const [query, setQuery] = useState("");
     const [onlyPicked, setOnlyPicked] = useState(false);
+    const [quote, setQuote] = useState(null);
+    const [quoting, setQuoting] = useState(false);
     const [error, setError] = useState("");
-    const [added, setAdded] = useState(null);
+    const [booking, setBooking] = useState(false);
+    const [done, setDone] = useState(null);
 
     useEffect(() => {
         let live = true;
@@ -204,22 +223,17 @@ export default function BookingPage() {
 
     const campaign = useMemo(() => (campaigns || []).find((c) => c._id === campaignId) || null, [campaigns, campaignId]);
     const start = dateOnly(campaign?.startDate);
-    const end = dateOnly(campaign?.endDate);
-    const today = todayLocal();
-    // The air date is the campaign's; a longer campaign may choose a day in its run.
-    const earliest = start && start < today ? today : start;
-    const latest = end && end >= start ? end : "";
-    const datePassed = start && start < today && (!latest || latest < today);
+    const end = dateOnly(campaign?.endDate) || start;
+    const today = new Date().toISOString().slice(0, 10);
+    const ended = !!end && end < today;
 
-    // New campaign: reset advert, date and ticks.
     useEffect(() => {
         if (!campaignId) return undefined;
         let live = true;
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setCreatives(null);
         setCreativeId("");
-        setPicked(new Map());
-        setAdded(null);
+        setDone(null);
         getCreatives(campaignId)
             .then((r) => {
                 if (!live) return;
@@ -232,54 +246,33 @@ export default function BookingPage() {
         return () => { live = false; };
     }, [campaignId]);
 
-    useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setAirDate(datePassed ? "" : earliest || "");
-    }, [campaignId, earliest, datePassed]);
-
-    // Station calendars (blocked dates, airtime hours), fetched once a station is opened.
-    useEffect(() => {
-        const missing = [...openIds].filter((id) => !(id in availability));
-        if (!missing.length) return;
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setAvailability((prev) => ({ ...prev, ...Object.fromEntries(missing.map((id) => [id, null])) }));
-        missing.forEach((id) => getStationAvailability(id)
-            .then((r) => setAvailability((prev) => ({ ...prev, [id]: r?.data || null })))
-            .catch(() => {}));
-    }, [openIds, availability]);
-
-    // A new date can make ticked slots unavailable: drop those.
-    useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setPicked((prev) => {
-            const next = new Map([...prev].filter(([, { rate }]) => soldOn(rate, airDate)));
-            return next.size === prev.size ? prev : next;
-        });
-    }, [airDate]);
-
     const creative = (creatives || []).find((c) => c._id === creativeId && isBookableAdvert(c)) || null;
     const readyAdverts = (creatives || []).filter(isBookableAdvert);
     const notReady = (creatives || []).filter((c) => !isBookableAdvert(c));
+    const ready = !!campaign && !!start && !ended;
 
-    const inCart = useMemo(() => new Set(cart.items
-        .filter((i) => i.campaignId === campaignId && i.date === airDate)
-        .map((i) => i.rateId)), [cart.items, campaignId, airDate]);
-
-    // station|slot → the length already chosen there (ticked here or in the cart).
-    const takenSlots = useMemo(() => {
-        const map = new Map();
-        const stationById = new Map(stations.map((s) => [s._id, s]));
-        for (const i of cart.items) {
-            if (i.campaignId !== campaignId || i.date !== airDate) continue;
-            const rate = (stationById.get(i.stationId)?.rateCard || []).find((r) => r && r._id === i.rateId);
-            if (rate) map.set(`${i.stationId}|${slotKey(rate)}`, { rateId: rate._id, seconds: rate.spotSeconds, inCart: true });
-        }
-        for (const { station, rate } of picked.values()) map.set(`${station._id}|${slotKey(rate)}`, { rateId: rate._id, seconds: rate.spotSeconds, inCart: false });
-        return map;
-    }, [stations, cart.items, campaignId, airDate, picked]);
+    // Live price from the server (same rules as checkout).
+    const payload = useMemo(() => (campaign && lines.length ? {
+        campaignId: campaign._id,
+        creativeId: creativeId || undefined,
+        lines: lines.map((l) => ({ stationId: l.stationId, rateId: l.rateId, days: l.days, spotsPerDay: l.spotsPerDay, startDate: l.startDate || undefined, endDate: l.endDate || undefined })),
+    } : null), [campaign, lines, creativeId]);
+    const seq = useRef(0);
+    useEffect(() => {
+        if (!payload) { setQuote(null); return undefined; } // eslint-disable-line react-hooks/set-state-in-effect
+        const my = ++seq.current;
+        setQuoting(true);
+        const t = setTimeout(() => {
+            quoteMediaPlan(payload)
+                .then((r) => { if (my === seq.current) setQuote(r?.data || null); })
+                .catch((err) => { if (my === seq.current) { setQuote(null); setError(err?.message || "We couldn't price the plan."); } })
+                .finally(() => { if (my === seq.current) setQuoting(false); });
+        }, 400);
+        return () => clearTimeout(t);
+    }, [payload]);
 
     const regions = useMemo(() => [...new Set(stations.map((s) => s.location?.state).filter(Boolean))].sort(), [stations]);
-    const pickedStations = useMemo(() => new Set([...picked.values()].map((p) => p.station._id)), [picked]);
+    const pickedStations = useMemo(() => new Set(lines.map((l) => l.stationId)), [lines]);
     const visible = useMemo(() => {
         const q = query.trim().toLowerCase();
         return stations.filter((s) =>
@@ -289,153 +282,101 @@ export default function BookingPage() {
             && (!q || [s.name, s.location?.city, s.location?.state].filter(Boolean).join(" ").toLowerCase().includes(q)));
     }, [stations, type, region, query, onlyPicked, pickedStations]);
 
-    const room = Math.max(0, MAX_CART_ITEMS - cart.count);
-    const ready = !!campaign && !!creative && !!airDate;
-
     const toggle = (station, rate) => {
         setError("");
-        setAdded(null);
-        if (!ready) {
-            setError(!campaign ? "Choose the campaign first." : !creative ? "Choose the advert to air first." : "Your campaign needs an air date first.");
-            return;
-        }
-        setPicked((prev) => {
-            const next = new Map(prev);
-            const sameSlot = [...next.values()].find((p) => p.station._id === station._id && slotKey(p.rate) === slotKey(rate) && p.rate._id !== rate._id);
-            if (next.has(rate._id)) next.delete(rate._id);
-            else if (sameSlot) {
-                setError(`One spot length per slot: untick the ${sameSlot.rate.spotSeconds ? `${sameSlot.rate.spotSeconds}s` : "other"} ${rate.name} first.`);
-                return prev;
-            } else if (next.size >= room) {
-                setError(`A cart holds ${MAX_CART_ITEMS} spots${cart.count ? ` and already has ${cart.count}` : ""}. Check out these first, then book more.`);
-                return prev;
-            } else next.set(rate._id, { station, rate });
-            return next;
-        });
-    };
-
-    // Estimate (the server prices it again): subtotal, multi-station discount, VAT.
-    const summary = useMemo(() => {
-        const list = [...picked.values()];
-        const subtotal = list.reduce((sum, p) => sum + Number(p.rate.price || 0), 0);
-        const stationCount = new Set(list.map((p) => p.station._id)).size;
-        const { percent } = discountPercentFor(stationCount, discountOptions);
-        const discount = Math.round(subtotal * percent) / 100;
-        const vat = Math.round((subtotal - discount) * VAT_PERCENT) / 100;
-        // What "Book & pay" will charge: this campaign's spots already in the
-        // cart plus the ones ticked here (one checkout per campaign).
-        const inCartItems = cart.items.filter((i) => i.campaignId === campaignId);
-        const allSubtotal = subtotal + inCartItems.reduce((sum, i) => sum + Number(i.price || 0), 0);
-        const allStations = new Set([...list.map((p) => p.station._id), ...inCartItems.map((i) => i.stationId)]).size;
-        const all = discountPercentFor(allStations, discountOptions);
-        const allDiscount = Math.round(allSubtotal * all.percent) / 100;
-        const checkoutTotal = allSubtotal - allDiscount + Math.round((allSubtotal - allDiscount) * VAT_PERCENT) / 100;
-        return { count: list.length, stationCount, subtotal, percent, discount, vat, total: subtotal - discount + vat, checkoutTotal, inCartCount: inCartItems.length };
-    }, [picked, discountOptions, cart.items, campaignId]);
-
-    // The wallet pays: show what's left, or how much is missing, as they tick.
-    const { balance, wallet } = useWallet();
-    const shortfall = balance != null && summary.count ? Math.max(0, Math.round((summary.checkoutTotal - balance) * 100) / 100) : 0;
-
-    const addToCart = (goToCheckout) => {
-        setError("");
-        if (!ready) return setError("Choose the campaign and advert first.");
-        if (!picked.size) return setError("Tick at least one slot.");
-        const items = [...picked.values()].slice(0, room).map(({ station, rate }) => {
-            const timing = fieldsFromRate(station, rate);
-            return {
-                campaignId: campaign._id,
-                campaignName: campaign.name,
+        setDone(null);
+        if (!ready) { setError(!campaign ? "Choose the campaign first." : !start ? "Give the campaign a start and end date first." : "This campaign has ended. Change its dates first."); return; }
+        setLines((prev) => {
+            if (prev.some((l) => l.rateId === rate._id)) return prev.filter((l) => l.rateId !== rate._id);
+            const rateDays = rate.days || [];
+            return [...prev, {
+                key: `${station._id}-${rate._id}`,
                 stationId: station._id,
                 stationName: station.name,
-                stationType: station.type || null,
                 rateId: rate._id,
                 rateName: rate.name,
                 spotSeconds: rate.spotSeconds || null,
-                creativeId: creative._id,
-                creativeName: creative.name,
-                price: Number(rate.price),
-                currency: station.pricing?.currency || "NGN",
-                slot: timing.slot,
-                date: airDate,
-                time: timing.time,
-                duration: timing.duration,
-            };
+                programme: programmeKey(rate),
+                rateDays,
+                when: groupWhen({ kind: rate.kind, startTime: rate.startTime, endTime: rate.endTime, size: rate.size, colour: rate.colour }),
+                // Default: every day it's sold (a Thursday-only programme starts on Thursdays).
+                days: rateDays.length ? [...rateDays] : [1, 2, 3, 4, 5, 6, 0],
+                spotsPerDay: 1,
+                startDate: "",
+                endDate: "",
+            }];
         });
-        items.forEach((item) => cart.addItem(item));
-        setPicked(new Map());
-        if (goToCheckout) {
-            router.push(`${paths.checkout}?campaign=${encodeURIComponent(campaign._id)}`);
-            return;
+    };
+    const updateLine = (key, patch) => setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+    const removeLine = (key) => setLines((prev) => prev.filter((l) => l.key !== key));
+    const setOpen = (id, open) => setOpenIds((prev) => { const next = new Set(prev); if (open) next.add(id); else next.delete(id); return next; });
+
+    const totals = quote?.totals || null;
+    const lineErrors = new Map((quote?.errors || []).filter((e) => e.line != null).map((e) => [e.line, e.message]));
+    const planErrors = (quote?.errors || []).filter((e) => e.line == null);
+    const shortfall = totals && balance != null ? Math.max(0, Math.round((totals.total - balance) * 100) / 100) : 0;
+    const canBook = ready && !!creative && !!totals && !quoting && !(quote?.errors || []).length && shortfall === 0 && !booking;
+
+    const book = async () => {
+        setError("");
+        setBooking(true);
+        try {
+            const res = await checkoutMediaPlan(payload);
+            walletChanged();
+            setDone({ message: res?.message, spots: res?.data?.spots });
+            setLines([]);
+        } catch (err) {
+            setError(err?.message || "The plan could not be booked. You have not been charged.");
+        } finally {
+            setBooking(false);
         }
-        setAdded({ count: items.length, stations: new Set(items.map((i) => i.stationId)).size });
     };
 
-    const setOpen = (id, open) => setOpenIds((prev) => {
-        const next = new Set(prev);
-        if (open) next.add(id); else next.delete(id);
-        return next;
-    });
-
-    if (loadError) {
-        return <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">{loadError}</div>;
-    }
-    if (campaigns === null) {
-        return <div className="flex justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-emerald-500" /></div>;
-    }
-
-    const lengthNote = creative?.durationSeconds ? creative.durationSeconds : null;
+    if (loadError) return <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">{loadError}</div>;
+    if (campaigns === null) return <div className="flex justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-emerald-500" /></div>;
 
     return (
         <div>
             <div className="mb-6">
-                <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900 dark:text-white">
-                    <CalendarDays className="h-6 w-6 text-emerald-500" /> Book airtime
-                </h1>
+                <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900 dark:text-white"><CalendarDays className="h-6 w-6 text-emerald-500" /> Book airtime</h1>
                 <p className="mt-1 text-slate-500 dark:text-slate-400">
-                    Pick your campaign and advert, then tick the slots you want on as many TV, radio and press houses as you like. Pay once; each media house confirms your date.
+                    Build your media plan for the whole campaign: tick slots on any media houses, choose the days they air and how many spots a day. The whole plan is held in your wallet and each media house is paid as its spots air.
                 </p>
             </div>
 
-            {/* Step 1: campaign, date and advert */}
+            {done && (
+                <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 sm:flex-row sm:items-center sm:justify-between dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200">
+                    <p className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" /> {done.message}</p>
+                    <Link href={`${paths.campaigns}`} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700"><ListChecks className="h-4 w-4" /> Track the campaign</Link>
+                </div>
+            )}
+
             <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
                 {campaigns.length === 0 ? (
                     <p className="text-sm text-slate-600 dark:text-slate-300">
-                        You need a campaign before you can book.{" "}
-                        <Link href={paths.campaigns} className="font-medium text-emerald-600 hover:underline dark:text-emerald-400">Create a campaign</Link> with its air date first.
+                        You need a campaign first. <Link href={paths.campaigns} className="font-medium text-emerald-600 hover:underline dark:text-emerald-400">Create a campaign</Link> with its start and end dates.
                     </p>
                 ) : (
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                         <label className="block">
                             <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">1. Campaign</span>
-                            <select value={campaignId} onChange={(e) => setCampaignId(e.target.value)} className={selectClass}>
+                            <select value={campaignId} onChange={(e) => { setCampaignId(e.target.value); setLines([]); }} className={selectClass}>
                                 <option value="">Choose a campaign</option>
                                 {campaigns.map((c) => <option key={c._id} value={c._id}>{c.name}{c.clientBrand ? ` (${c.clientBrand})` : ""}</option>)}
                             </select>
                         </label>
-
                         <div>
-                            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">2. Air date</span>
+                            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">2. Campaign period</span>
                             {!campaign ? (
                                 <p className="rounded-lg bg-slate-50 px-3.5 py-2.5 text-sm text-slate-400 dark:bg-slate-800">From your campaign</p>
                             ) : !start ? (
-                                <p className="rounded-lg bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
-                                    This campaign has no air date. <Link href={paths.campaigns} className="font-medium underline">Add it on the campaign</Link>.
-                                </p>
-                            ) : datePassed ? (
-                                <p className="rounded-lg bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
-                                    The air date ({start}) has passed. <Link href={paths.campaigns} className="font-medium underline">Change it on the campaign</Link>.
-                                </p>
-                            ) : latest && latest > earliest ? (
-                                <>
-                                    <input type="date" value={airDate} min={earliest} max={latest} onChange={(e) => setAirDate(e.target.value)} className={selectClass} />
-                                    <span className="mt-1 block text-xs text-slate-400">Within your campaign ({start} to {latest}).</span>
-                                </>
+                                <p className="rounded-lg bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">No dates yet. <Link href={paths.campaigns} className="font-medium underline">Add the start and end dates</Link>.</p>
+                            ) : ended ? (
+                                <p className="rounded-lg bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">This campaign ended on {prettyDate(end)}. <Link href={paths.campaigns} className="font-medium underline">Change its dates</Link>.</p>
                             ) : (
-                                <p className="rounded-lg bg-emerald-50 px-3.5 py-2.5 text-sm font-medium text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-200">{prettyDate(airDate)}</p>
+                                <p className="rounded-lg bg-emerald-50 px-3.5 py-2.5 text-sm font-medium text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-200">{prettyDate(start)} to {prettyDate(end)}</p>
                             )}
                         </div>
-
                         <div>
                             <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">3. Advert to air</span>
                             {!campaign ? (
@@ -461,126 +402,86 @@ export default function BookingPage() {
                 )}
             </section>
 
-            {/* Step 2: media houses */}
-            <section>
-                <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <h2 className="text-lg font-semibold text-slate-900 dark:text-white">4. Tick your slots <span className="text-sm font-normal text-slate-500">({visible.length} media house{visible.length === 1 ? "" : "s"})</span></h2>
-                    <div className="flex flex-wrap items-center gap-2">
-                        <div className="relative">
-                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search media houses" aria-label="Search media houses"
-                                className="w-56 rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
-                        </div>
-                        <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Media type" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-                            {TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                        </select>
-                        {regions.length > 1 && (
-                            <select value={region} onChange={(e) => setRegion(e.target.value)} aria-label="State" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-                                <option value="ALL">All states</option>
-                                {regions.map((r) => <option key={r} value={r}>{r}</option>)}
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
+                <section className="xl:col-span-3">
+                    <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                        <h2 className="text-lg font-semibold text-slate-900 dark:text-white">4. Tick slots <span className="text-sm font-normal text-slate-500">({visible.length} media house{visible.length === 1 ? "" : "s"})</span></h2>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <div className="relative">
+                                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search media houses" aria-label="Search media houses" className="w-48 rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
+                            </div>
+                            <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Media type" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                                {TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
                             </select>
-                        )}
-                        <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-                            <input type="checkbox" className="accent-emerald-600" checked={onlyPicked} onChange={(e) => setOnlyPicked(e.target.checked)} /> Only ticked
-                        </label>
+                            {regions.length > 1 && (
+                                <select value={region} onChange={(e) => setRegion(e.target.value)} aria-label="State" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                                    <option value="ALL">All states</option>
+                                    {regions.map((r) => <option key={r} value={r}>{r}</option>)}
+                                </select>
+                            )}
+                            <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300"><input type="checkbox" className="accent-emerald-600" checked={onlyPicked} onChange={(e) => setOnlyPicked(e.target.checked)} /> In plan</label>
+                        </div>
                     </div>
-                </div>
+                    {visible.length === 0 ? (
+                        <p className="rounded-2xl border border-dashed border-slate-200 p-10 text-center text-sm text-slate-500 dark:border-slate-700"><MapPin className="mx-auto mb-2 h-6 w-6 text-slate-300" /> No media houses match.</p>
+                    ) : (
+                        <div className="space-y-3">
+                            {visible.map((s) => (
+                                <StationRates key={s._id} station={s} lines={lines} onToggle={toggle} open={openIds.has(s._id)} onOpenChange={(o) => setOpen(s._id, o)} advertSeconds={creative?.durationSeconds || null} />
+                            ))}
+                        </div>
+                    )}
+                </section>
 
-                {!ready && campaigns.length > 0 && (
-                    <p className="mb-4 flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                        <AlertTriangle className="h-4 w-4 text-amber-500" /> Choose your campaign and advert above, then tick slots below.
-                    </p>
-                )}
-                {lengthNote && (
-                    <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">Your advert is {lengthNote}s: book {lengthNote}s spots (or longer) so it isn&apos;t cut.</p>
-                )}
-
-                {visible.length === 0 ? (
-                    <p className="rounded-2xl border border-dashed border-slate-200 p-10 text-center text-sm text-slate-500 dark:border-slate-700">
-                        <MapPin className="mx-auto mb-2 h-6 w-6 text-slate-300" /> No media houses match. Try another type, state or search.
-                    </p>
-                ) : (
-                    <div className="space-y-3">
-                        {visible.map((s) => (
-                            <StationRates
-                                key={s._id}
-                                station={s}
-                                date={airDate}
-                                picked={picked}
-                                inCart={inCart}
-                                takenSlots={takenSlots}
-                                onToggle={toggle}
-                                open={openIds.has(s._id)}
-                                onOpenChange={(o) => setOpen(s._id, o)}
-                                advertSeconds={lengthNote}
-                                availability={availability[s._id] || null}
-                            />
-                        ))}
-                    </div>
-                )}
-            </section>
-
-            {/* Summary bar */}
-            <div className="sticky bottom-3 z-30 mt-6 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-lg backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="text-sm">
-                        {error ? (
-                            <p role="alert" className="text-red-600 dark:text-red-400">{error}</p>
-                        ) : added ? (
-                            <p className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300">
-                                <Check className="h-4 w-4" /> {added.count} spot{added.count === 1 ? "" : "s"} on {added.stations} media house{added.stations === 1 ? "" : "s"} added to your cart.
-                            </p>
-                        ) : summary.count ? (
-                            <>
-                                <p className="font-semibold text-slate-900 dark:text-white">
-                                    {summary.count} spot{summary.count === 1 ? "" : "s"} · {summary.stationCount} media house{summary.stationCount === 1 ? "" : "s"} · {formatMoney(summary.total, "NGN")}
-                                </p>
-                                <p className="text-xs text-slate-500 dark:text-slate-400">
-                                    {formatMoney(summary.subtotal, "NGN")}
-                                    {summary.discount > 0 ? ` − ${summary.percent}% discount ${formatMoney(summary.discount, "NGN")}` : ""}
-                                    {` + VAT ${formatMoney(summary.vat, "NGN")}`} · on {airDate}
-                                    {summary.stationCount < 3 ? " · 3+ media houses get a discount" : ""}
-                                </p>
-                                {balance != null && (shortfall > 0 ? (
-                                    <p role="alert" className="mt-1 flex flex-wrap items-center gap-1.5 text-xs font-medium text-red-600 dark:text-red-400">
-                                        <AlertTriangle className="h-3.5 w-3.5" /> Your wallet has {formatMoney(balance, "NGN")}: you&apos;re {formatMoney(shortfall, "NGN")} short{summary.inCartCount ? " (including this campaign's cart)" : ""}.
-                                        <Link href={`${paths.wallet}?fund=${Math.ceil(shortfall)}`} className="underline">Fund wallet</Link>
-                                    </p>
-                                ) : (
-                                    <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-                                        <WalletIcon className="h-3.5 w-3.5 text-emerald-500" /> Wallet {formatMoney(balance, "NGN")} · left after booking {formatMoney(balance - summary.checkoutTotal, "NGN")}
-                                    </p>
+                <aside className="xl:col-span-2">
+                    <div className="sticky top-20 space-y-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                        <h2 className="flex items-center justify-between font-semibold text-slate-900 dark:text-white">
+                            5. Your plan {quoting && <Loader2 className="h-4 w-4 animate-spin text-emerald-500" />}
+                        </h2>
+                        {lines.length === 0 ? (
+                            <p className="text-sm text-slate-500 dark:text-slate-400">Tick slots on the left. Each becomes a line here, where you choose its days (e.g. Thursdays) and spots per day for the campaign period.</p>
+                        ) : (
+                            <ul className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+                                {lines.map((l, i) => (
+                                    <PlanLine key={l.key} line={l} quote={quote?.lines?.find((q) => q.index === i)} error={lineErrors.get(i)} campaignStart={start} campaignEnd={end}
+                                        onChange={(patch) => updateLine(l.key, patch)} onRemove={() => removeLine(l.key)} />
                                 ))}
-                            </>
+                            </ul>
+                        )}
+
+                        {totals && (
+                            <dl className="space-y-1 border-t border-slate-100 pt-3 text-sm dark:border-slate-800">
+                                <div className="flex justify-between text-slate-600 dark:text-slate-300"><dt>{totals.spots.toLocaleString()} spots · {totals.stations} media house{totals.stations === 1 ? "" : "s"}</dt><dd>{formatMoney(totals.gross)}</dd></div>
+                                <div className="flex justify-between text-emerald-700 dark:text-emerald-400"><dt>Volume discount</dt><dd>−{formatMoney(totals.volumeDiscount)}</dd></div>
+                                {totals.agencyCommission > 0 && <div className="flex justify-between text-emerald-700 dark:text-emerald-400"><dt>Agency commission {totals.agencyCommissionPercent}%</dt><dd>−{formatMoney(totals.agencyCommission)}</dd></div>}
+                                <div className="flex justify-between text-slate-600 dark:text-slate-300"><dt>Net</dt><dd>{formatMoney(totals.net)}</dd></div>
+                                <div className="flex justify-between text-slate-600 dark:text-slate-300"><dt>VAT {totals.vatPercent}%</dt><dd>{formatMoney(totals.vat)}</dd></div>
+                                <div className="flex justify-between border-t border-slate-100 pt-2 font-semibold text-slate-900 dark:border-slate-800 dark:text-white"><dt>Total (held in your wallet)</dt><dd>{formatMoney(totals.total)}</dd></div>
+                                <p className="text-xs text-slate-400">{prettyDate(totals.firstDate)} to {prettyDate(totals.lastDate)} · you save {formatMoney(totals.savings)}</p>
+                            </dl>
+                        )}
+
+                        {planErrors.map((e) => <p key={e.message} className="text-sm text-red-600 dark:text-red-400">{e.message}</p>)}
+                        {error && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+                        {!creative && lines.length > 0 && <p className="text-sm text-amber-700 dark:text-amber-300">Choose the advert to air (step 3).</p>}
+
+                        {totals && balance != null && (shortfall > 0 ? (
+                            <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">
+                                <p className="flex items-center gap-1.5 font-medium"><AlertTriangle className="h-4 w-4" /> Your wallet has {formatMoney(balance)}: you&apos;re {formatMoney(shortfall)} short.</p>
+                                <Link href={`${paths.wallet}?fund=${Math.ceil(shortfall)}`} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-red-500 px-3 py-1.5 font-medium text-white hover:bg-red-600"><WalletIcon className="h-4 w-4" /> Fund wallet</Link>
+                            </div>
                         ) : (
-                            <p className="text-slate-500 dark:text-slate-400">
-                                Nothing ticked yet.{cart.count ? ` ${cart.count} spot${cart.count === 1 ? "" : "s"} already in your cart.` : ""}
-                                {balance != null && <span className={`ml-1 ${wallet?.isLow ? "text-red-600 dark:text-red-400" : ""}`}>Wallet: {formatMoney(balance, "NGN")}.</span>}
-                            </p>
-                        )}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                        {cart.count > 0 && !summary.count && (
-                            <Link href={paths.cart} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
-                                <ShoppingCart className="h-4 w-4" /> View cart ({cart.count})
-                            </Link>
-                        )}
-                        <button type="button" disabled={!summary.count} onClick={() => addToCart(false)}
-                            className="rounded-lg border border-emerald-500 px-4 py-2.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-emerald-300 dark:hover:bg-emerald-500/10">
-                            Add to cart
+                            <p className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400"><WalletIcon className="h-3.5 w-3.5 text-emerald-500" /> Wallet {formatMoney(balance)} · left after booking {formatMoney(balance - totals.total)}</p>
+                        ))}
+
+                        <button type="button" disabled={!canBook} onClick={book} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40">
+                            {booking ? <Loader2 className="h-4 w-4 animate-spin" /> : <WalletIcon className="h-4 w-4" />}
+                            {totals ? `Book plan: ${formatMoney(totals.total)} from wallet` : "Book plan"}
                         </button>
-                        {shortfall > 0 ? (
-                            <Link href={`${paths.wallet}?fund=${Math.ceil(shortfall)}`} className="inline-flex items-center gap-2 rounded-lg bg-red-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-red-600">
-                                <WalletIcon className="h-4 w-4" /> Fund wallet to book
-                            </Link>
-                        ) : (
-                            <button type="button" disabled={!summary.count} onClick={() => addToCart(true)}
-                                className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40">
-                                <WalletIcon className="h-4 w-4" /> Book &amp; pay from wallet
-                            </button>
-                        )}
+                        <p className="text-xs text-slate-400">Each media house confirms its order. Money for each spot is paid only once it airs; anything that doesn&apos;t air comes back to your wallet.</p>
                     </div>
-                </div>
+                </aside>
             </div>
         </div>
     );

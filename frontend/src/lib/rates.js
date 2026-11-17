@@ -34,6 +34,10 @@ export const fieldsFromRate = (station, rate) => {
 // rateSlotKey): only one length per slot can be booked on a day.
 export const slotKey = (r) => [r.name, r.kind, r.startTime || "", r.endTime || "", r.size || "", r.colour || "", (r.days || []).join("")].join("|");
 
+// A programme / belt whatever its length or days (one volume discount and one
+// spot length per programme in a plan; same as the server's programmeKey).
+export const programmeKey = (r) => [r.name, r.kind, r.startTime || "", r.endTime || "", r.size || "", r.colour || ""].join("|");
+
 // Rate rows → one group per belt / programme / placement, each with its spot lengths.
 export const groupRates = (rates) => {
     const map = new Map();

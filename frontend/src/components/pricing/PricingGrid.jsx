@@ -14,7 +14,7 @@ const featuresFor = (p) => [
     "TV, radio & press booking",
     p.storageMB >= 1024 ? `${Math.round(p.storageMB / 1024)} GB document storage` : `${p.storageMB} MB document storage`,
     p.teamSeats == null ? "Unlimited team seats" : `${p.teamSeats} team seats`,
-    p.discountPercent > 0 ? `Extra ${p.discountPercent}% off every checkout` : "Multi-station discounts",
+    p.discountPercent > 0 ? `Extra ${p.discountPercent}% off every checkout` : "Negotiated volume discounts",
     "Booking & slot reminders by email and SMS",
 ];
 

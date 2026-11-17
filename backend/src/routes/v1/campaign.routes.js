@@ -105,4 +105,7 @@ router.post(
     cancelCampaign
 );
 
+// Spots planned / aired / pending and money held / spent, per media house.
+router.get('/:id/tracker', requireAdvertiser, requirePermission('CAMPAIGN_VIEW'), require('../../controllers/mediaPlan.controller').getCampaignTracker);
+
 module.exports = router;

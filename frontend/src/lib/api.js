@@ -672,6 +672,18 @@ export const confirmBookingAired = async (id) => authFetch(`/api/v1/bookings/${i
 export const disputeBooking = async (id, { reason, details }) =>
     authFetch(`/api/v1/bookings/${id}/dispute`, { method: 'POST', body: JSON.stringify({ reason, details }) });
 export const getStationEarnings = async () => authFetch('/api/v1/station-portal/earnings');
+
+// ── MEDIA PLANS (long campaigns: days of the week x spots per day over a period) ──
+export const quoteMediaPlan = async (plan) => authFetch('/api/v1/media-plans/quote', { method: 'POST', body: JSON.stringify(plan) });
+export const checkoutMediaPlan = async (plan) => authFetch('/api/v1/media-plans/checkout', { method: 'POST', body: JSON.stringify(plan) });
+export const getCampaignTracker = async (id) => authFetch(`/api/v1/campaigns/${id}/tracker`);
+export const acceptStationOrder = async (paymentId, note) =>
+    authFetch(`/api/v1/station-portal/orders/${paymentId}/accept`, { method: 'PATCH', body: JSON.stringify({ note }) });
+export const markStationDayAired = async (stationId, { date, logUploadId, clipUploadId, note }) =>
+    authFetch(`/api/v1/station-portal/stations/${stationId}/aired-day`, { method: 'PATCH', body: JSON.stringify({ date, logUploadId, clipUploadId, note }) });
+export const getAdminVolumeDiscounts = async () => authFetch('/api/v1/admin/volume-discounts');
+export const setAdminVolumeDiscount = async (stationId, { percent, programmes }) =>
+    authFetch(`/api/v1/admin/stations/${stationId}/volume-discount`, { method: 'PUT', body: JSON.stringify({ percent, programmes }) });
 export const setStationPayoutAccount = async (stationId, account) =>
     authFetch(`/api/v1/station-portal/stations/${stationId}/payout-account`, { method: 'PUT', body: JSON.stringify(account) });
 export const requestStationPayout = async (stationId, amount) =>

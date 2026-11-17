@@ -26,6 +26,11 @@ router.get('/summary', requireStationOperator('BOOKING_VIEW'), getSummary);
 // Earnings (paid for aired spots), the bank account, payout requests.
 const settlement = require('../../controllers/settlement.controller');
 router.get('/earnings', requireStationOperator('BOOKING_VIEW'), settlement.getEarnings);
+
+// Media plans: accept a whole order; mark a day's spots aired (one TX log + clip).
+const plans = require('../../controllers/mediaPlan.controller');
+router.patch('/orders/:paymentId/accept', requireStationOperator('BOOKING_APPROVE'), plans.acceptOrder);
+router.patch('/stations/:id/aired-day', requireStationOperator('BOOKING_APPROVE'), plans.markDayAired);
 router.put('/stations/:id/payout-account', requireStationOperator('BOOKING_APPROVE'), settlement.setPayoutAccount);
 router.post('/stations/:id/payouts', requireStationOperator('BOOKING_APPROVE'), settlement.requestPayout);
 router.get('/stations', requireStationOperator('BOOKING_VIEW'), getMyStations);

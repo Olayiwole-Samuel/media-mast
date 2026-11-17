@@ -30,6 +30,7 @@ import Link from "next/link";
 import { useSession } from "@/lib/auth";
 import { advertiserPaths } from "@/lib/cart";
 import CancellationDialog from "@/components/bookings/CancellationDialog";
+import CampaignTracker from "@/components/bookings/CampaignTracker";
 
 // Campaigns for the signed-in company (GET/POST/PUT/DELETE /campaigns,
 // PATCH /campaigns/:id/status). Only status changes the backend allows from
@@ -159,7 +160,8 @@ export default function CompanyCampaignsPage() {
 
         if (!form.name.trim()) return setFormError("Please give your campaign a name.");
         if (form.objective === "OTHER" && !form.objectiveOther.trim()) return setFormError("Tell us what the campaign is for.");
-        if (!form.startDate) return setFormError("Choose the air date: your spots are booked for this day.");
+        if (!form.startDate) return setFormError("Choose when the campaign starts.");
+        if (!form.endDate) return setFormError("Choose when the campaign ends (the same day for a one-day campaign).");
         if (form.startDate && form.endDate && form.endDate < form.startDate) {
             return setFormError("The end date can't be before the start date.");
         }
@@ -475,13 +477,13 @@ export default function CompanyCampaignsPage() {
 
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <label className="block">
-                            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Air date</span>
+                            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Starts</span>
                             <input type="date" required value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} className={inputClass} />
-                            <span className="mt-1 block text-xs text-slate-400">Your spots are booked for this day; each media house confirms it or suggests another.</span>
+                            <span className="mt-1 block text-xs text-slate-400">You can book spots on any day between the start and end, e.g. every Thursday for 6 months.</span>
                         </label>
                         <label className="block">
-                            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Last day (optional, for a longer run)</span>
-                            <input type="date" min={form.startDate || undefined} value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className={inputClass} />
+                            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Ends</span>
+                            <input type="date" required min={form.startDate || undefined} value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className={inputClass} />
                         </label>
                     </div>
 
@@ -538,6 +540,12 @@ export default function CompanyCampaignsPage() {
                                 </div>
                             ) : (
                                 <>
+                                    {viewing.bookings?.length > 0 && (
+                                        <section>
+                                            <h3 className="mb-3 text-xs uppercase tracking-wider text-slate-400">Tracker</h3>
+                                            <CampaignTracker campaignId={viewing._id} />
+                                        </section>
+                                    )}
                                     <section>
                                         <div className="mb-3 flex items-center justify-between">
                                             <h3 className="text-xs uppercase tracking-wider text-slate-400">Bookings ({viewing.bookings?.length || 0})</h3>
@@ -550,7 +558,7 @@ export default function CompanyCampaignsPage() {
                                         </div>
                                         {viewing.bookings?.length ? (
                                             <div className="space-y-2">
-                                                {viewing.bookings.map((booking) => {
+                                                {viewing.bookings.slice(0, 60).map((booking) => {
                                                     const badge = bookingStatus(booking.status);
                                                     return (
                                                         <div key={booking._id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 p-4 dark:bg-slate-800">

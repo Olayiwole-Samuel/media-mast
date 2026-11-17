@@ -489,6 +489,80 @@ const notifyPayoutDecided = safely('payout decided', async (request, station) =>
     return true;
 });
 
+// ── Media plans ──
+const fmtDay = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+// One message per media house (its order) and one to the advertiser.
+const notifyPlanBooked = safely('plan booked', async ({ payment, campaign, lines, totals }) => {
+    const user = await User.findById(payment.userId).select('email name status accountType');
+    if (user) {
+        const { text, html } = renderEmail({
+            heading: 'Media plan booked',
+            paragraphs: [
+                `"${campaign.name}": ${totals.spots} spots on ${totals.stations} media house${totals.stations === 1 ? '' : 's'}, ${fmtDay(totals.firstDate)} to ${fmtDay(totals.lastDate)}.`,
+                `${money(totals.total, payment.currency)} (net ${money(totals.net, payment.currency)} + VAT ${money(totals.vat, payment.currency)}) is on hold in your wallet. Each media house is paid only as its spots air.`,
+                ...lines.slice(0, 40).map((l) => `${l.station.name} · ${l.rate.name}${l.rate.spotSeconds ? ` ${l.rate.spotSeconds}s` : ''} · ${l.days.map((d) => DAY_SHORT[d]).join('/')} · ${l.spots} spots · ${money(l.totals.total, payment.currency)}`),
+            ],
+            action: { label: 'Track the campaign', url: appUrl(bookingsPath(user)) },
+        });
+        await sendEmail({ to: user.email, subject: `Media plan booked: ${totals.spots} spots`, text, html });
+        await pushInApp([user], { type: 'PAYMENT_RECEIVED', title: `Plan booked: ${totals.spots} spots`, body: `"${campaign.name}" · ${money(totals.total, payment.currency)} on hold, paid as spots air.`, link: bookingsPath(user) });
+    }
+    const byStation = new Map();
+    for (const l of lines) {
+        const k = String(l.station._id);
+        if (!byStation.has(k)) byStation.set(k, []);
+        byStation.get(k).push(l);
+    }
+    for (const [stationId, ls] of byStation) {
+        const { station, users, emails } = await stationContacts(stationId);
+        if (!station) continue;
+        const spots = ls.reduce((t, l) => t + l.spots, 0);
+        const net = ls.reduce((t, l) => t + l.totals.net, 0);
+        const first = ls.map((l) => l.dates[0]).sort()[0];
+        const last = ls.map((l) => l.dates[l.dates.length - 1]).sort().slice(-1)[0];
+        const body = `${spots} spots for "${campaign.name}", ${fmtDay(first)} to ${fmtDay(last)} · ${money(net, payment.currency)} (net), paid as they air`;
+        await pushInApp(users, { type: 'BOOKING_REQUEST', title: `New order: ${spots} spots`, body, link: '/station/requests' });
+        if (emails.length) {
+            const { text, html } = renderEmail({
+                heading: `New order for ${station.name}`,
+                paragraphs: [body, ...ls.map((l) => `${l.rate.name}${l.rate.spotSeconds ? ` ${l.rate.spotSeconds}s` : ''} · ${l.days.map((d) => DAY_SHORT[d]).join('/')} · ${l.spotsPerDay} a day · ${l.spots} spots`), 'Accept the whole order on your desk, or decline any dates you cannot take.'],
+                action: { label: 'Review the order', url: appUrl('/station/requests') },
+            });
+            await sendEmail({ to: emails, subject: `New order: ${spots} spots for "${campaign.name}"`, text, html });
+        }
+    }
+    return true;
+});
+
+// Many spots changed at once (a whole order accepted, a day marked aired):
+// one message per advertiser and media house, not one per spot.
+const notifyPlanStatus = safely('plan status', async (bookings, { kind, note, date }) => {
+    if (!bookings.length) return false;
+    const byAdvertiser = new Map();
+    for (const b of bookings) {
+        const k = `${b.userId}|${b.stationId}`;
+        if (!byAdvertiser.has(k)) byAdvertiser.set(k, []);
+        byAdvertiser.get(k).push(b);
+    }
+    for (const list of byAdvertiser.values()) {
+        const [user, { station }] = await Promise.all([advertiserOf(list[0]), stationContacts(list[0].stationId)]);
+        if (!user) continue;
+        const name = station ? station.name : 'The media house';
+        const title = kind === 'ACCEPTED' ? `${name} accepted ${list.length} spot${list.length === 1 ? '' : 's'}` : `${name}: ${list.length} spot${list.length === 1 ? '' : 's'} aired${date ? ` on ${fmtDay(date)}` : ''}`;
+        const body = kind === 'ACCEPTED'
+            ? [note ? `Note: ${note}` : null, 'Your money stays on hold and is paid as each spot airs.'].filter(Boolean).join(' ')
+            : airedWindowLine(list[0]);
+        await pushInApp([user], { type: 'BOOKING_STATUS', title, body, link: bookingsPath(user) });
+        if (kind === 'AIRED') {
+            const { text, html } = renderEmail({ heading: title, paragraphs: [body], action: { label: 'Check the proof', url: appUrl(bookingsPath(user)) } });
+            await sendEmail({ to: user.email, subject: title, text, html });
+        }
+    }
+    return true;
+});
+
 // ── Wallet ──
 const walletPath = (user) => (user && user.accountType === 'INDIVIDUAL' ? '/wallet' : '/company/wallet');
 
@@ -529,6 +603,8 @@ module.exports = {
     notifyAirOverdue,
     notifyPayoutRequested,
     notifyPayoutDecided,
+    notifyPlanBooked,
+    notifyPlanStatus,
     notifyVerificationSubmitted,
     notifyVerificationDecision,
     notifyCheckout,

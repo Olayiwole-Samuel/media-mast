@@ -7,10 +7,9 @@ import { getPlans, getMySubscription } from "@/lib/api";
 // the server's plans endpoint) plus the advertiser's plan discount. The
 // server works it out again at checkout; this is only the estimate.
 
-const DEFAULT_TIERS = [
-    { minStations: 3, percent: 5 },
-    { minStations: 5, percent: 10 },
-];
+// The multi-station discount is switched off (volume discounts replace it);
+// the server sends its tiers (none by default).
+const DEFAULT_TIERS = [];
 const MAX_PERCENT = 30;
 
 export const discountPercentFor = (stationCount, { tiers = DEFAULT_TIERS, planPercent = 0 } = {}) => {

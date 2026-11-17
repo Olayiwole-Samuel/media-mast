@@ -308,6 +308,22 @@ const StationSchema = new mongoose.Schema(
             default: null,
         },
 
+        // Volume discount (admin-set): a default % for this media house and
+        // optional % per programme (key = name|kind|start|end|size|colour,
+        // so every spot length of a programme shares it).
+        volumeDiscount: {
+            percent: { type: Number, default: 0, min: 0, max: 90 },
+            programmes: {
+                type: [{
+                    _id: false,
+                    key: { type: String, required: true },
+                    name: { type: String, default: null },
+                    percent: { type: Number, min: 0, max: 90 },
+                }],
+                default: [],
+            },
+        },
+
         // Where its earnings are paid (payout requests snapshot this).
         payoutAccount: {
             bankName: { type: String, default: null },

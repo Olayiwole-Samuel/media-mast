@@ -170,9 +170,6 @@ export default function CartView() {
                                                 {total.discountPercent}% off ({total.stationCount} stations{discountOptions.planPercent ? ` + ${discountOptions.planName} plan` : ""})
                                             </span>
                                         )}
-                                        {total.discount === 0 && total.stationCount < 3 && (
-                                            <span className="block text-xs text-slate-400">Book 3 or more stations in one checkout for a discount.</span>
-                                        )}
                                         <span className="block text-xs text-slate-400">Prices are confirmed by each station&apos;s rate at checkout.</span>
                                     </p>
                                     <Link

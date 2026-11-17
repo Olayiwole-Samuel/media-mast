@@ -17,6 +17,7 @@ import {
 import { bookingStatus, formatMoney, formatDate, spotHasAired, ESCROW_STATUS } from "@/lib/status";
 import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/PageState";
 import BookingAdvert from "@/components/station/BookingAdvert";
+import StationBulkPanels from "@/components/station/StationBulkPanels";
 
 // Booking requests for the stations the signed-in account operates
 // (GET /bookings/station): a STATION account, or a company linked to a station.
@@ -342,6 +343,7 @@ export default function StationRequests({ wrapperClassName = "p-4 sm:p-6 lg:p-8"
                 />
             ) : (
                 <div className="space-y-4">
+                    <StationBulkPanels bookings={bookings} onChanged={(text) => { setNotice({ type: "success", text }); load(); }} />
                     <div className="flex gap-2 overflow-x-auto pb-1">
                         {FILTERS.map((f) => (
                             <button key={f.value} type="button" onClick={() => setFilter(f.value)} className={`shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${filter === f.value ? "bg-emerald-500 text-white" : "bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
