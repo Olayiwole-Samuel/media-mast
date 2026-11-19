@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { CalendarDays } from "lucide-react";
-import { getStationBookings } from "@/lib/api";
+import { CalendarDays, CalendarCheck, Loader2 } from "lucide-react";
+import { getStationBookings, scheduleAllStationBookings } from "@/lib/api";
 import { formatDate } from "@/lib/status";
 import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/PageState";
 
@@ -50,6 +50,20 @@ export default function StationSchedulePage() {
         return [...groups.entries()];
     }, [bookings]);
 
+    const accepted = bookings.filter((b) => b.status === "ACCEPTED").length;
+    const [busy, setBusy] = useState(false);
+    const [notice, setNotice] = useState("");
+    const scheduleAll = async () => {
+        setBusy(true); setNotice("");
+        try {
+            const res = await scheduleAllStationBookings();
+            setNotice(res?.message || "All accepted spots scheduled.");
+            await load();
+        } catch (err) {
+            setNotice(err?.message || "Couldn't schedule them.");
+        } finally { setBusy(false); }
+    };
+
     if (loading) return <PageLoading label="Loading your schedule…" />;
 
     return (
@@ -61,6 +75,16 @@ export default function StationSchedulePage() {
                 </h1>
                 <p className="mt-1 text-slate-500 dark:text-slate-400">Spots you&apos;ve accepted, by day. Mark them scheduled and, once aired, complete them on the requests page.</p>
             </motion.div>
+
+            {accepted > 0 && (
+                <div className="mb-5 flex flex-col gap-2 rounded-2xl border border-sky-200 bg-sky-50 p-3 text-sm sm:flex-row sm:items-center sm:justify-between dark:border-sky-500/20 dark:bg-sky-500/10">
+                    <p className="text-sky-900 dark:text-sky-200">{accepted} accepted spot{accepted === 1 ? "" : "s"} not yet scheduled.</p>
+                    <button type="button" disabled={busy} onClick={scheduleAll} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-2 font-medium text-white hover:bg-sky-700 disabled:opacity-60">
+                        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarCheck className="h-4 w-4" />} Schedule all {accepted}
+                    </button>
+                </div>
+            )}
+            {notice && <p role="status" className="mb-4 text-sm text-slate-600 dark:text-slate-300">{notice}</p>}
 
             {error ? (
                 <ApiErrorState error={error} what="your schedule" onRetry={load} />

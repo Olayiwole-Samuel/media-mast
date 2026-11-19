@@ -31,6 +31,12 @@ router.get('/earnings', requireStationOperator('BOOKING_VIEW'), settlement.getEa
 const plans = require('../../controllers/mediaPlan.controller');
 router.patch('/orders/:paymentId/accept', requireStationOperator('BOOKING_APPROVE'), plans.acceptOrder);
 router.patch('/stations/:id/aired-day', requireStationOperator('BOOKING_APPROVE'), plans.markDayAired);
+router.patch('/schedule-all', requireStationOperator('BOOKING_APPROVE'), plans.scheduleAll);
+
+// Agencies' volume discounts with this media house: confirm or reject.
+const agreements = require('../../controllers/volumeAgreement.controller');
+router.get('/volume-agreements', requireStationOperator('BOOKING_VIEW'), agreements.getStationAgreements);
+router.patch('/volume-agreements/:agreementId', requireStationOperator('BOOKING_APPROVE'), (req, res) => { req.params.id = req.params.agreementId; return agreements.decideAgreement(req, res); });
 router.put('/stations/:id/payout-account', requireStationOperator('BOOKING_APPROVE'), settlement.setPayoutAccount);
 router.post('/stations/:id/payouts', requireStationOperator('BOOKING_APPROVE'), settlement.requestPayout);
 router.get('/stations', requireStationOperator('BOOKING_VIEW'), getMyStations);

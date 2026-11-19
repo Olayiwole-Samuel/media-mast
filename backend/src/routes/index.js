@@ -63,6 +63,7 @@ router.use('/uploads', uploadRoutes);
 router.use('/verification', verificationRoutes);
 router.use('/wallet', require('./v1/wallet.routes'));
 router.use('/media-plans', require('./v1/plan.routes'));
+router.use('/volume-agreements', require('./v1/volumeAgreement.routes'));
 // Cron (no user session): send due slot reminders. Bearer CRON_SECRET.
 router.post('/jobs/reminders', runReminderJob);
 // Public: plans and checkout discount tiers (pricing page).

@@ -8,6 +8,8 @@ import { useCart, groupByCampaign, advertiserPaths, MAX_CART_ITEMS } from "@/lib
 import { formatMoney } from "@/lib/status";
 import { EmptyState, PageLoading } from "@/components/common/PageState";
 import { discountPercentFor, useCheckoutDiscount } from "@/lib/discounts";
+import PlanCart from "@/components/cart/PlanCart";
+import { useState } from "react";
 
 // The booking cart: spots from any number of stations, grouped by campaign.
 // One checkout pays for one campaign's spots.
@@ -100,6 +102,7 @@ export default function CartView() {
     const cart = useCart();
     const paths = advertiserPaths(user);
     const discountOptions = useCheckoutDiscount();
+    const [planCount, setPlanCount] = useState(null);
 
     if (!ready) return <PageLoading label="Loading your cart…" />;
 
@@ -114,26 +117,28 @@ export default function CartView() {
                         Cart
                     </h1>
                     <p className="mt-1 text-slate-500 dark:text-slate-400">
-                        Spots you&apos;ve picked across stations. Pay once per campaign; stations receive your requests after payment.
+                        Your media plans, saved as you built them. See what each needs, fund your wallet if short, and pay. Media houses get their orders once you pay.
                     </p>
                 </div>
-                <Link href={paths.stations} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
-                    <Plus className="h-4 w-4" /> Add more spots
+                <Link href={paths.book} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
+                    <Plus className="h-4 w-4" /> Book airtime
                 </Link>
             </motion.div>
 
-            {groups.length === 0 ? (
+            <div className="mb-6"><PlanCart paths={paths} onCount={setPlanCount} /></div>
+
+            {groups.length === 0 ? (planCount === 0 && (
                 <EmptyState
                     icon={ShoppingCart}
                     title="Your cart is empty"
-                    message="Browse stations, pick a date and time, and add the spots you want. You can mix radio, TV and other stations."
+                    message="Build a media plan on Book airtime: tick slots on any media houses and set the spots for each day. It's saved here as you go."
                     action={
-                        <Link href={paths.stations} className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
-                            <Radio className="h-4 w-4" /> Browse stations
+                        <Link href={paths.book} className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
+                            <Radio className="h-4 w-4" /> Book airtime
                         </Link>
                     }
                 />
-            ) : (
+            )) : (
                 <div className="space-y-6">
                     {cart.count >= MAX_CART_ITEMS && (
                         <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">

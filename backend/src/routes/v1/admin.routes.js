@@ -363,10 +363,8 @@ router.post('/payouts/:id/decline', settlementAdmin.declinePayout);
 router.get('/settlement-settings', settlementAdmin.getSettings);
 router.patch('/settlement-settings', settlementAdmin.updateSettings);
 
-// Volume discounts per media house / programme (used to price media plans).
-const plansAdmin = require('../../controllers/mediaPlan.controller');
-router.get('/volume-discounts', plansAdmin.getVolumeDiscounts);
-router.put('/stations/:id/volume-discount', plansAdmin.setVolumeDiscount);
+// Volume discounts: agencies' agreements with media houses (read-only overview).
+router.get('/volume-agreements', require('../../controllers/volumeAgreement.controller').getAdminAgreements);
 router.post('/subscriptions', assignSubscription);
 router.get('/plans', getAdminPlans);
 router.put('/plans/:code', updatePlan);

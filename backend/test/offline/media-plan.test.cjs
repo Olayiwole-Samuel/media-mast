@@ -120,7 +120,7 @@ const applyUpdate = (o, u) => {
         o[k] = (o[k] || 0) + n;
     }
 };
-const C = { users: User, employees: Employee, companies: Company, campaigns: Campaign, stations: Station, bookings: Booking, payments: Payment, creatives: Creative, plans: Plan, subscriptions: Subscription, notifications: Notification, verifications: Verification, wallets: Wallet, walletTransactions: WalletTransaction, platformSettings: PlatformSetting, payoutRequests: PayoutRequest };
+const C = { users: User, employees: Employee, companies: Company, campaigns: Campaign, stations: Station, bookings: Booking, payments: Payment, creatives: Creative, plans: Plan, subscriptions: Subscription, notifications: Notification, verifications: Verification, wallets: Wallet, walletTransactions: WalletTransaction, platformSettings: PlatformSetting, payoutRequests: PayoutRequest, volumeAgreements: src('models/VolumeAgreement'), planDrafts: src('models/PlanDraft') };
 for (const [c, M] of Object.entries(C)) {
     M.find = (f) => q(M, () => db[c].filter((d) => matches(d, f)));
     M.findOne = (f) => q(M, () => db[c].find((d) => matches(d, f)) || null);
@@ -225,7 +225,7 @@ const seed = () => {
             st('s3'), st('s4'), st('s5'), st('press', { type: 'PRESS' })],
         campaigns: [cp('ivy'), cp('ivyClosed', { status: 'CANCELLED' }), cp('ivyRanged', { startDate: new Date(`${day(5)}T00:00:00Z`), endDate: new Date(`${day(8)}T00:00:00Z`) }),
             cp('ian', { userId: U.indiv2 }), cp('companyA', { companyId: A, userId: U.ownerA, status: 'SUBMITTED' })],
-        bookings: [], payments: [], creatives: [], audit: [], plans: [], subscriptions: [], notifications: [], verifications: [], wallets: [], walletTransactions: [], platformSettings: [], payoutRequests: [],
+        bookings: [], payments: [], creatives: [], audit: [], plans: [], subscriptions: [], notifications: [], verifications: [], wallets: [], walletTransactions: [], platformSettings: [], payoutRequests: [], volumeAgreements: [], planDrafts: [],
     };
 };
 AuditLog.create = async (data) => { const a = new AuditLog(data); await a.validate(); db.audit.push(a.toObject()); return a; };
@@ -293,57 +293,82 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
     const planOf = (key, lines, creativeId) => ({ campaignId: String(CP[key]._id), lines, creativeId: String(creativeId) });
     const countDays = (from, to, weekdays) => { let n = 0; for (let t = new Date(`${from}T00:00:00Z`).getTime(); t <= new Date(`${to}T00:00:00Z`).getTime(); t += 864e5) if (weekdays.includes(new Date(t).getUTCDay())) n += 1; return n; };
 
-    // ── V: volume discounts (admin) ──
-    let r = await call(U.ownerA, 'PUT', `/api/v1/admin/stations/${S.fm1._id}/volume-discount`, { percent: 10 });
-    check('V1  Only admins set volume discounts → 403', r.code === 403, `${r.code}`);
-    r = await call(U.admin, 'PUT', `/api/v1/admin/stations/${S.fm1._id}/volume-discount`, { percent: 95 });
-    check('V2  Over 90% → 400', r.code === 400, `${r.code}`);
-    r = await call(U.admin, 'PUT', `/api/v1/admin/stations/${S.fm1._id}/volume-discount`, { percent: 10 });
-    check('V3  Admin sets 10% for the TV station', r.code === 200 && fm1.volumeDiscount?.percent === 10, `${r.code} ${r.body.message}`);
-    r = await call(U.admin, 'GET', '/api/v1/admin/volume-discounts');
-    const fm2Row = (r.body.data || []).find((s) => eq(s._id, S.fm2._id));
-    const driveKey = fm2Row?.programmes?.[0]?.key;
-    const newsRow = (r.body.data || []).find((s) => eq(s._id, S.fm1._id));
-    check('V4  Discounts tab lists each media house with its programmes (all lengths of a programme together)', r.code === 200 && newsRow?.programmes.length === 1 && newsRow.programmes[0].lengths.join(',') === '60,30' && !!driveKey, `${r.code} ${JSON.stringify(newsRow?.programmes)}`);
-    r = await call(U.admin, 'PUT', `/api/v1/admin/stations/${S.fm2._id}/volume-discount`, { percent: 5, programmes: [{ key: driveKey, name: 'Morning Drive', percent: 15 }] });
-    check('V5  A programme can have its own discount (Morning Drive 15%, the station default 5%)', r.code === 200 && fm2.volumeDiscount.programmes[0].percent === 15 && fm2.volumeDiscount.percent === 5, `${r.code} ${r.body.message}`);
+    // ── V: volume discounts — the agency enters its agreement; the media house confirms ──
+    const thursdays = countDays(day(1), day(182), [4]);
+    const newsLine = { stationId: String(S.fm1._id), rateId: String(news30._id), spotsByDay: { 4: 1 } };
+    let r = await call(U.indiv, 'GET', '/api/v1/volume-agreements');
+    check('V1  Volume discounts are for media agencies (a brand → 403)', r.code === 403 && r.body.code === 'AGENCY_ONLY', `${r.code}`);
+    r = await call(U.ownerA, 'GET', '/api/v1/volume-agreements');
+    const newsRow = (r.body.data || []).find((x) => eq(x.station._id, S.fm1._id));
+    const driveKey = ((r.body.data || []).find((x) => eq(x.station._id, S.fm2._id))?.programmes || [])[0]?.key;
+    check('V2  The agency sees every media house with its programmes (all lengths of a programme together)', r.code === 200 && newsRow?.programmes.length === 1 && newsRow.programmes[0].lengths.join(',') === '60,30' && !!driveKey && newsRow.agreement === null, `${r.code}`);
+    r = await call(U.ownerA, 'PUT', `/api/v1/volume-agreements/${S.fm1._id}`, { percent: 95 });
+    check('V3  Over 90% → 400', r.code === 400, `${r.code}`);
+    r = await call(U.ownerA, 'PUT', `/api/v1/volume-agreements/${S.fm1._id}`, { percent: 10, note: '2026 agreement, ref TVC/AG/14' });
+    check('V4  Agency enters 10% with the TV station → PENDING; the media house is asked to confirm', r.code === 200 && r.body.data.status === 'PENDING' && db.notifications.some((n) => eq(n.userId, U.station) && /Confirm/.test(n.title)), `${r.code} ${r.body.message}`);
+    r = await call(U.ownerA, 'POST', '/api/v1/media-plans/quote', planOf('companyA', [newsLine], adA._id));
+    check('V5  Until the media house confirms, the discount is not used (shown as waiting)', r.code === 200 && r.body.data.lines[0].volumeDiscountStatus === 'PENDING' && r.body.data.lines[0].unit.volumeDiscount === 0, JSON.stringify(r.body.data?.lines?.[0]?.unit));
+    r = await call(U.station, 'GET', '/api/v1/station-portal/volume-agreements');
+    const agr = (r.body.data || [])[0];
+    check('V6  The media house sees the request with the agency and note', r.code === 200 && agr?.agencyName === 'Advertiser Co' && agr.percent === 10 && agr.status === 'PENDING' && /TVC\/AG\/14/.test(agr.agencyNote), `${r.code}`);
+    r = await call(U.station, 'PATCH', `/api/v1/station-portal/volume-agreements/${agr._id}`, { decision: 'REJECT' });
+    check('V7  Rejecting needs a reason → 400', r.code === 400, `${r.code}`);
+    r = await call(U.station, 'PATCH', `/api/v1/station-portal/volume-agreements/${agr._id}`, { decision: 'APPROVE' });
+    check('V8  Media house confirms → APPROVED; the agency is told', r.code === 200 && r.body.data.status === 'APPROVED' && db.notifications.some((n) => eq(n.userId, U.ownerA) && /confirmed your 10%/.test(n.title)), `${r.code} ${r.body.message}`);
+    r = await call(U.indiv2, 'PATCH', `/api/v1/station-portal/volume-agreements/${agr._id}`, { decision: 'APPROVE' });
+    check("V9  Another account can't confirm it → 403/404", r.code === 403 || r.code === 404, `${r.code}`);
+    r = await call(U.ownerA, 'PUT', `/api/v1/volume-agreements/${S.fm2._id}`, { percent: 5, programmes: [{ key: driveKey, percent: 15 }] });
+    const agr2 = db.volumeAgreements.find((a) => eq(a.stationId, S.fm2._id));
+    const r9 = await call(U.admin, 'PATCH', `/api/v1/station-portal/volume-agreements/${agr2?._id}`, { decision: 'APPROVE' });
+    check('V10 A programme can have its own % (Morning Drive 15%, the media house default 5%), confirmed', r.code === 200 && r9.code === 200 && agr2.programmes[0].percent === 15 && agr2.status === 'APPROVED', `${r.code} ${r9.code}`);
+    r = await call(U.admin, 'GET', '/api/v1/admin/volume-agreements');
+    check('V11 Admin sees every agreement and its status', r.code === 200 && r.body.data.length === 2 && r.body.data.every((a) => a.status === 'APPROVED'), `${r.code}`);
     r = await call(null, 'GET', '/api/v1/plans');
     check('V6  The old 3+ media house discount is off', r.code === 200 && Array.isArray(r.body.data.discountTiers) && r.body.data.discountTiers.length === 0, JSON.stringify(r.body.data?.discountTiers));
 
     // ── Q: pricing a 6-month plan ──
-    const thursdays = countDays(day(1), day(182), [4]);
-    const newsLine = { stationId: String(S.fm1._id), rateId: String(news30._id), days: [4], spotsPerDay: 1 };
     r = await call(U.ownerA, 'POST', '/api/v1/media-plans/quote', planOf('companyA', [newsLine], adA._id));
     const q1 = r.body.data?.lines?.[0];
     check(`Q1  Network News every Thursday for 6 months → ${thursdays} spots`, r.code === 200 && q1?.spots === thursdays && q1.airingDays === thursdays, `${r.code} ${q1?.spots}/${thursdays} ${JSON.stringify(r.body.data?.errors)}`);
     check('Q2  Priced like the Zebet plan: ₦642,000 − 10% volume = ₦577,800 − 15% agency = ₦491,130 net + VAT = ₦527,964.75', q1 && q1.unit.gross === 642000 && q1.unit.volumeDiscount === 64200 && q1.unit.agencyCommission === 86670 && q1.unit.net === 491130 && q1.unit.vat === 36834.75 && q1.unit.total === 527964.75 && r.body.data.isAgency === true, JSON.stringify(q1?.unit));
     check('Q3  Totals: gross, savings, net, VAT and total for the whole plan', r.body.data.totals.total === r2(527964.75 * thursdays) && r.body.data.totals.savings === r2((64200 + 86670) * thursdays) && r.body.data.wallet.shortfall === r2(527964.75 * thursdays), JSON.stringify(r.body.data.totals));
-    r = await call(U.ownerA, 'POST', '/api/v1/media-plans/quote', planOf('companyA', [{ ...newsLine, days: [1] }], adA._id));
+    r = await call(U.ownerA, 'POST', '/api/v1/media-plans/quote', planOf('companyA', [{ ...newsLine, spotsByDay: { 1: 1 } }], adA._id));
     check('Q4  A Thursday-only programme on Mondays → no dates, explained', r.code === 200 && r.body.data.errors.some((e) => e.line === 0 && /No Network News dates/.test(e.message)), JSON.stringify(r.body.data?.errors));
     r = await call(U.ownerA, 'POST', '/api/v1/media-plans/quote', planOf('companyA', [newsLine, { ...newsLine, rateId: String(news60._id) }], adA._id));
     check('Q5  30s and 60s of the same programme in one plan → refused (one length per programme)', r.code === 200 && r.body.data.errors.some((e) => e.line === 1 && /One spot length per programme/.test(e.message)), JSON.stringify(r.body.data?.errors));
     r = await call(U.indiv, 'POST', '/api/v1/media-plans/quote', planOf('ivy', [newsLine], adIvy._id));
-    check('Q6  A brand (not an agency) pays no agency commission: net ₦577,800', r.code === 200 && r.body.data.isAgency === false && r.body.data.lines[0].unit.agencyCommission === 0 && r.body.data.lines[0].unit.net === 577800, JSON.stringify(r.body.data?.lines?.[0]?.unit));
-    const driveLine = { stationId: String(S.fm2._id), rateId: String(drive30._id), days: [1, 2, 3, 4, 5], spotsPerDay: 2, startDate: day(8), endDate: day(35) };
+    check('Q6  A brand (not an agency): no agency commission and no agency volume discount → net ₦642,000', r.code === 200 && r.body.data.isAgency === false && r.body.data.lines[0].unit.agencyCommission === 0 && r.body.data.lines[0].unit.net === 642000, JSON.stringify(r.body.data?.lines?.[0]?.unit));
+    r = await call(U.ownerA, 'POST', '/api/v1/media-plans/quote', planOf('companyA', [{ stationId: String(S.fm1._id), rateId: String(news30._id), days: [4], spotsPerDay: 1 }], adA._id));
+    check('Q6b The older "days + spots per day" form still works', r.code === 200 && r.body.data.lines[0]?.spots === thursdays, `${r.code}`);
+    // Different spots per day: Monday 2, Tuesday 1.
+    const driveLine = { stationId: String(S.fm2._id), rateId: String(drive30._id), spotsByDay: { 1: 2, 2: 1 }, startDate: day(8), endDate: day(35) };
     r = await call(U.ownerA, 'POST', '/api/v1/media-plans/quote', planOf('companyA', [{ ...driveLine, endDate: day(400) }], adA._id));
     check('Q7  Line dates outside the campaign → error', r.code === 200 && r.body.data.errors.some((e) => /inside the campaign/.test(e.message)), JSON.stringify(r.body.data?.errors));
     r = await call(U.ownerA, 'POST', '/api/v1/media-plans/quote', planOf('companyA', [newsLine, driveLine], adA._id));
-    const weekdays = countDays(day(8), day(35), [1, 2, 3, 4, 5]);
+    const driveSpots = countDays(day(8), day(35), [1]) * 2 + countDays(day(8), day(35), [2]);
     const q2 = r.body.data.lines[1];
     const planTotal = r.body.data.totals.total;
-    check(`Q8  Radio weekdays, 2 a day for 4 weeks → ${weekdays * 2} spots at ₦50,000 − 15% (programme discount) − 15% + VAT`, q2?.spots === weekdays * 2 && q2.unit.volumeDiscountPercent === 15 && q2.unit.net === 36125 && q2.unit.total === 38834.38, JSON.stringify(q2?.unit));
+    check(`Q8  Radio: Mondays 2 and Tuesdays 1 for 4 weeks → ${driveSpots} spots at ₦50,000 − 15% (programme discount) − 15% + VAT`, q2?.spots === driveSpots && q2.spotsByDay.join(',') === '0,2,1,0,0,0,0' && q2.unit.volumeDiscountPercent === 15 && q2.unit.net === 36125 && q2.unit.total === 38834.38, JSON.stringify(q2?.unit));
 
     // ── C: checkout holds the whole plan ──
     r = await call(U.ownerA, 'POST', '/api/v1/media-plans/checkout', planOf('companyA', [newsLine, driveLine], adA._id));
     check('C1  Not enough in the wallet → 402 with the shortfall; nothing booked', r.code === 402 && r.body.code === 'WALLET_INSUFFICIENT' && r.body.data.shortfall === planTotal && db.bookings.length === 0, `${r.code} ${r.body.message}`);
+    r = await call(U.ownerA, 'PUT', `/api/v1/media-plans/drafts/${CP.companyA._id}`, { lines: [newsLine, driveLine], creativeId: String(adA._id) });
+    check('K1  The plan is saved to the cart as it is built', r.code === 200 && db.planDrafts.length === 1, `${r.code} ${r.body.message}`);
+    r = await call(U.ownerA, 'GET', '/api/v1/media-plans/drafts');
+    check('K2  Cart shows the plan priced, the money needed and the shortfall', r.code === 200 && r.body.data.drafts.length === 1 && r.body.data.needed === planTotal && r.body.data.wallet.shortfall === planTotal, `${r.code} ${JSON.stringify(r.body.data?.wallet)}`);
     await call(U.ownerA, 'POST', '/api/v1/wallet/fund', { amount: Math.ceil(planTotal) + 100000 });
+    r = await call(U.ownerA, 'GET', `/api/v1/media-plans/drafts/${CP.companyA._id}`);
+    check('K3  After funding the wallet, the plan is still there exactly as left (per-day spots too)', r.code === 200 && r.body.data.lines.length === 2 && r.body.data.lines[1].spotsByDay.join(',') === '0,2,1,0,0,0,0' && r.body.data.creativeId === String(adA._id), JSON.stringify(r.body.data));
+    r = await call(U.indiv, 'GET', '/api/v1/media-plans/drafts');
+    check("K4  Another advertiser's cart is separate", r.code === 200 && r.body.data.drafts.length === 0, `${r.code}`);
     r = await call(U.ownerA, 'POST', '/api/v1/media-plans/checkout', planOf('companyA', [newsLine, driveLine], 'x'));
     check('C2  An advert is required (approved, with ARCON) → 400, nothing held', r.code === 400 && walletOf({ companyId: A }).held === 0, `${r.code} ${r.body.message}`);
-    r = await call(U.ownerA, 'POST', '/api/v1/media-plans/checkout', planOf('companyA', [newsLine, driveLine], adA._id));
+    r = await call(U.ownerA, 'POST', `/api/v1/media-plans/drafts/${CP.companyA._id}/checkout`, {});
     const wA = walletOf({ companyId: A });
     const planBookings = db.bookings.filter((b) => eq(b.campaignId, CP.companyA._id));
     const planPay = db.payments.find((p) => eq(p.campaignId, CP.companyA._id));
-    check(`C3  Plan booked: ${thursdays + weekdays * 2} spots, the whole ₦${planTotal.toLocaleString()} on hold, ₦100,000 left to spend`, r.code === 201 && planBookings.length === thursdays + weekdays * 2 && wA.held === planTotal && r2(wA.balance) === r2(Math.ceil(planTotal) + 100000 - planTotal) && planPay?.provider === "WALLET" && planPay.amount === planTotal, `${r.code} ${r.body.message}`);
+    check(`C3  Booked from the cart: ${thursdays + driveSpots} spots, the whole ₦${planTotal.toLocaleString()} on hold, ₦100,000 left; the cart is emptied`, r.code === 201 && db.planDrafts.length === 0 && planBookings.length === thursdays + driveSpots && wA.held === planTotal && r2(wA.balance) === r2(Math.ceil(planTotal) + 100000 - planTotal) && planPay?.provider === "WALLET" && planPay.amount === planTotal, `${r.code} ${r.body.message}`);
     const news = planBookings.filter((b) => eq(b.stationId, S.fm1._id)).sort((a, b) => a.date - b.date);
     check('C4  Every spot is its own booking on the right day and time, holding its exact price', news.every((b) => new Date(b.date).getUTCDay() === 4 && b.time === '21:00' && b.escrow.status === 'HELD' && b.escrow.amount === 527964.75 && b.pricing.net === 491130 && b.status === 'PENDING'), JSON.stringify(news[0]?.pricing));
     check('C5  Each media house gets one order message, not one per spot', db.notifications.filter((n) => eq(n.userId, U.station) && /New order/.test(n.title)).length === 1);
@@ -352,6 +377,10 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
     r = await call(U.station, 'PATCH', `/api/v1/station-portal/orders/${planPay._id}/accept`, { note: 'Confirmed for the whole run' });
     check(`O1  Media house accepts its whole order at once (${thursdays} spots); the radio station's spots are untouched`, r.code === 200 && r.body.data.accepted === thursdays && news.every((b) => bk(b._id).status === 'ACCEPTED') && planBookings.filter((b) => eq(b.stationId, S.fm2._id)).every((b) => bk(b._id).status === 'PENDING'), `${r.code} ${r.body.message}`);
     check('O2  The agency gets one "accepted" message', db.notifications.filter((n) => eq(n.userId, U.ownerA) && /accepted/.test(n.title)).length === 1);
+    r = await call(U.station, 'PATCH', '/api/v1/station-portal/schedule-all', { stationId: String(S.fm1._id) });
+    check(`O3  "Schedule all": every accepted spot (${thursdays}) scheduled at once; one message to the agency`, r.code === 200 && r.body.data.scheduled === thursdays && news.every((b) => bk(b._id).status === 'SCHEDULED') && db.notifications.filter((n) => eq(n.userId, U.ownerA) && /scheduled/.test(n.title)).length === 1, `${r.code} ${r.body.message}`);
+    r = await call(U.station, 'PATCH', '/api/v1/station-portal/schedule-all', { stationId: String(S.fm1._id) });
+    check('O4  Nothing left to schedule → 400', r.code === 400, `${r.code}`);
 
     // ── D: daily confirmation and daily payment ──
     const past = new Date(Date.now() - 2 * 864e5);
@@ -379,7 +408,7 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
     r = await call(U.ownerA, 'GET', `/api/v1/campaigns/${CP.companyA._id}/tracker`);
     const tNews = (r.body.data?.stations || []).find((s) => eq(s.station._id, S.fm1._id));
     const tDrive = (r.body.data?.stations || []).find((s) => eq(s.station._id, S.fm2._id));
-    check('T1  Tracker per media house: planned, aired, upcoming; money spent and still held', r.code === 200 && tNews?.planned === thursdays && tNews.aired === 1 && tNews.upcoming === thursdays - 1 && tNews.spent === 527964.75 && tDrive?.cancelled === 1 && tDrive.planned === weekdays * 2, `${r.code} ${JSON.stringify(tNews)}`);
+    check('T1  Tracker per media house: planned, aired, upcoming; money spent and still held', r.code === 200 && tNews?.planned === thursdays && tNews.aired === 1 && tNews.upcoming === thursdays - 1 && tNews.spent === 527964.75 && tDrive?.cancelled === 1 && tDrive.planned === driveSpots, `${r.code} ${JSON.stringify(tNews)}`);
     check('T2  Tracker totals add up: held + spent + refunded = what was booked', r2(r.body.data.totals.held + r.body.data.totals.spent + r.body.data.totals.refunded) === r2(r.body.data.totals.booked) && r2(r.body.data.totals.booked) === r2(planTotal), JSON.stringify(r.body.data?.totals));
     r = await call(U.indiv, 'GET', `/api/v1/campaigns/${CP.companyA._id}/tracker`);
     check("T3  Another advertiser can't see the tracker → 404", r.code === 404, `${r.code}`);

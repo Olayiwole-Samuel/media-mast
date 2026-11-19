@@ -6,14 +6,15 @@ const { checkStationCalendar } = require('./stationCalendar');
 // like an agency media plan:
 //
 //   line = media house · programme/belt (rate card row, i.e. spot length) ·
-//          the days it airs (e.g. Thursdays) · spots per airing day ·
+//          spots for each weekday (e.g. Mon 2, Tue 1, Thu 3) ·
 //          optionally its own date range inside the campaign
 //
 // Each line becomes one spot per airing day (× spots per day) on every
 // matching date in the range. Price per spot, as on the plan:
 //
-//   gross (rate card) − volume discount % (admin-set, per media house or
-//   programme) − agency commission % (15%, media agencies only) = net
+//   gross (rate card) − volume discount % (the agency's agreement with that
+//   media house, entered by the agency and confirmed by the media house) −
+//   agency commission % (15%, media agencies only) = net
 //   + VAT (7.5% of net) = total
 //
 // The advertiser's wallet holds the whole plan's total at checkout; each
@@ -36,11 +37,28 @@ const agencyCommissionPercent = () => {
 // "News at 10" share one volume discount).
 const programmeKey = (r) => [r.name, r.kind, r.startTime || '', r.endTime || '', r.size || '', r.colour || ''].join('|');
 
-const volumeDiscountFor = (station, rate) => {
-    const vd = station.volumeDiscount || {};
-    const own = (vd.programmes || []).find((p) => p && p.key === programmeKey(rate));
-    const pct = own && own.percent != null ? Number(own.percent) : Number(vd.percent || 0);
+// The volume discount from an agreement (media house default, or the
+// programme's own %). No confirmed agreement → 0.
+const volumeDiscountFor = (agreement, rate) => {
+    if (!agreement) return 0;
+    const own = (agreement.programmes || []).find((p) => p && p.key === programmeKey(rate) && p.percent != null);
+    const pct = own ? Number(own.percent) : Number(agreement.percent || 0);
     return Number.isFinite(pct) ? Math.min(90, Math.max(0, pct)) : 0;
+};
+
+// Spots for each weekday (0 = Sunday … 6 = Saturday). Accepts
+// { spotsByDay: { "1": 2, "2": 1 } } or [7 counts], or the older
+// { days: [..], spotsPerDay: n }.
+const readSpotsByDay = (raw) => {
+    const out = [0, 0, 0, 0, 0, 0, 0];
+    if (raw && raw.spotsByDay && typeof raw.spotsByDay === 'object') {
+        const src = Array.isArray(raw.spotsByDay) ? raw.spotsByDay : Object.entries(raw.spotsByDay).reduce((a, [k, v]) => { a[Number(k)] = v; return a; }, []);
+        for (let d = 0; d < 7; d += 1) out[d] = src[d] == null || src[d] === '' ? 0 : Number(src[d]);
+    } else if (Array.isArray(raw?.days)) {
+        const n = Number(raw.spotsPerDay ?? 1);
+        for (const d of raw.days.map(Number)) if (Number.isInteger(d) && d >= 0 && d <= 6) out[d] = n;
+    }
+    return out;
 };
 
 // One spot's price breakdown.
@@ -78,12 +96,13 @@ const minutesOf = (hhmm) => { const [h, m] = String(hhmm || '00:00').split(':').
 /**
  * Build (price and expand) a plan. Returns { lines, totals, errors }.
  *   campaign: { startDate, endDate }
- *   rawLines: [{ stationId, rateId, days:[0-6], spotsPerDay, startDate?, endDate?, creativeId? }]
+ *   rawLines: [{ stationId, rateId, spotsByDay:{weekday: n}, startDate?, endDate?, creativeId? }]
+ *   agreements: Map(stationId → the agency's volume discount agreement) or null
  *   stations: Map(stationId → Station doc)
  *   isAgency: agency commission applies
  *   rateFields(station, rate) → { time, duration, slot, spotSeconds }
  */
-const buildPlan = ({ campaign, rawLines, stations, isAgency, rateFields, now = new Date() }) => {
+const buildPlan = ({ campaign, rawLines, stations, isAgency, rateFields, agreements = null, now = new Date() }) => {
     const errors = [];
     const lines = [];
     const vatPercent = getVatPercent();
@@ -106,10 +125,10 @@ const buildPlan = ({ campaign, rawLines, stations, isAgency, rateFields, now = n
         const rate = (station.rateCard || []).find((r) => r && r.isActive !== false && String(r._id) === String(raw.rateId));
         if (!rate || !(Number(rate.price) > 0)) return fail(`That rate is not on ${station.name}'s rate card`);
 
-        const days = [...new Set((Array.isArray(raw.days) ? raw.days : []).map(Number))].filter((d) => Number.isInteger(d) && d >= 0 && d <= 6);
-        if (!days.length) return fail('Choose the day(s) it airs');
-        const spotsPerDay = Number(raw.spotsPerDay ?? 1);
-        if (!Number.isInteger(spotsPerDay) || spotsPerDay < 1 || spotsPerDay > MAX_SPOTS_PER_DAY) return fail(`Spots per day must be 1 to ${MAX_SPOTS_PER_DAY}`);
+        const spotsByDay = readSpotsByDay(raw);
+        if (spotsByDay.some((n) => !Number.isInteger(n) || n < 0 || n > MAX_SPOTS_PER_DAY)) return fail(`Spots on a day must be 0 to ${MAX_SPOTS_PER_DAY}`);
+        const days = spotsByDay.map((n, d) => (n > 0 ? d : -1)).filter((d) => d >= 0);
+        if (!days.length) return fail('Choose how many spots on at least one day');
 
         let from = cStart, to = cEnd;
         if (raw.startDate || raw.endDate) {
@@ -135,15 +154,22 @@ const buildPlan = ({ campaign, rawLines, stations, isAgency, rateFields, now = n
         }
         if (!dates.length) return fail(`No ${rate.name} dates are available in that period`);
 
-        const unit = priceSpot({ gross: Number(rate.price), volumeDiscountPercent: volumeDiscountFor(station, rate), agencyCommissionPercent: ac, vatPercent });
-        const spots = dates.length * spotsPerDay;
+        const agreement = agreements ? agreements.get(String(station._id)) : null;
+        const unit = priceSpot({ gross: Number(rate.price), volumeDiscountPercent: volumeDiscountFor(agreement && agreement.status === 'APPROVED' ? agreement : null, rate), agencyCommissionPercent: ac, vatPercent });
+        // Each date gets that weekday's number of spots.
+        const spotsOn = dates.map((d) => spotsByDay[new Date(`${d}T00:00:00Z`).getUTCDay()]);
+        const spots = spotsOn.reduce((t, n) => t + n, 0);
         lines.push({
             index,
             station: { _id: station._id, name: station.name, type: station.type, currency: station.pricing?.currency || 'NGN' },
             rate: { _id: rate._id, name: rate.name, kind: rate.kind, startTime: rate.startTime || null, endTime: rate.endTime || null, spotSeconds: rate.spotSeconds || null, days: rate.days || [] },
             fields,
             days,
-            spotsPerDay,
+            spotsByDay,
+            spotsOn,
+            // The agency's volume discount with this media house: APPROVED (used),
+            // PENDING (waiting for the media house), REJECTED, or none.
+            volumeDiscountStatus: agreement ? agreement.status : null,
             from,
             to,
             dates,
@@ -189,6 +215,7 @@ module.exports = {
     agencyCommissionPercent,
     programmeKey,
     volumeDiscountFor,
+    readSpotsByDay,
     priceSpot,
     lineDates,
     buildPlan,

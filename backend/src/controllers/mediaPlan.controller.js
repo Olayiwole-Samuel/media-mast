@@ -6,7 +6,9 @@ const Payment = require('../models/Payment');
 const Creative = require('../models/Creative');
 const Company = require('../models/Company');
 const AuditLog = require('../models/AuditLog');
-const { buildPlan, programmeKey } = require('../utils/mediaPlan');
+const VolumeAgreement = require('../models/VolumeAgreement');
+const PlanDraft = require('../models/PlanDraft');
+const { buildPlan, readSpotsByDay } = require('../utils/mediaPlan');
 const { walletProvider, getOrCreateWallet, round2 } = require('../utils/wallet');
 const { generatePaymentReference } = require('../utils/payments');
 const { advertiserScope, advertiserOwner } = require('../utils/advertiser');
@@ -23,8 +25,8 @@ const isId = (v) => mongoose.isValidObjectId(v);
 const fmt = (n) => `₦${Number(n || 0).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
 
 // ── Shared: load the campaign, the media houses and price the plan ──
-const preparePlan = async (req) => {
-    const { campaignId, lines } = req.body || {};
+const preparePlan = async (req, given = null) => {
+    const { campaignId, lines } = given || req.body || {};
     if (!isId(campaignId)) return { status: 400, body: { success: false, message: 'Choose the campaign' } };
     const campaign = await Campaign.findOne({ _id: campaignId, ...advertiserScope(req) });
     if (!campaign) return { status: 404, body: { success: false, message: 'Campaign not found' } };
@@ -39,7 +41,13 @@ const preparePlan = async (req) => {
     const company = owner.companyId ? await Company.findById(owner.companyId).select('companyType') : null;
     const isAgency = company?.companyType === 'AGENCY';
 
-    const plan = buildPlan({ campaign, rawLines: lines, stations: byId, isAgency, rateFields: rateBookingFields });
+    // The agency's volume discount agreements with these media houses.
+    const agreements = new Map();
+    if (isAgency && stationIds.length) {
+        for (const a of await VolumeAgreement.find({ companyId: owner.companyId, stationId: { $in: stationIds } })) agreements.set(String(a.stationId), a);
+    }
+
+    const plan = buildPlan({ campaign, rawLines: lines, stations: byId, isAgency, rateFields: rateBookingFields, agreements });
     return { campaign, plan, byId, owner, isAgency };
 };
 
@@ -48,7 +56,8 @@ const publicLine = (l) => ({
     station: l.station,
     rate: l.rate,
     days: l.days,
-    spotsPerDay: l.spotsPerDay,
+    spotsByDay: l.spotsByDay,
+    volumeDiscountStatus: l.volumeDiscountStatus,
     from: l.from,
     to: l.to,
     airingDays: l.dates.length,
@@ -86,13 +95,13 @@ const quotePlan = async (req, res) => {
 
 // POST /plans/checkout — hold the whole plan in the wallet and send each
 // media house its order (one booking per spot).
-const checkoutPlan = async (req, res) => {
+const checkoutPlan = async (req, res, given = null, { onBooked } = {}) => {
     if (req.user.accountType === 'EMPLOYEE') {
         return res.status(403).json({ success: false, code: 'OWNER_ONLY', message: 'Only the account owner can book and pay from the wallet.' });
     }
     let held = null;
     try {
-        const ctx = await preparePlan(req);
+        const ctx = await preparePlan(req, given);
         if (ctx.status) return res.status(ctx.status).json(ctx.body);
         const { campaign, plan, owner } = ctx;
         if (plan.errors.length) {
@@ -101,7 +110,7 @@ const checkoutPlan = async (req, res) => {
         }
 
         // The advert (approved, with its ARCON certificate) for each line.
-        const defaultCreative = req.body.creativeId;
+        const defaultCreative = (given || req.body).creativeId;
         const creativeIds = [...new Set(plan.lines.map((l) => String(l.creativeId || defaultCreative || '')).filter(isId))];
         const creatives = creativeIds.length ? await Creative.find({ _id: { $in: creativeIds }, campaignId: campaign._id }) : [];
         const okCreative = new Map(creatives.filter((c) => c.status === 'APPROVED' && c.fileId && c.arcon?.fileId).map((c) => [String(c._id), c]));
@@ -151,8 +160,8 @@ const checkoutPlan = async (req, res) => {
 
         const docs = [];
         for (const l of plan.lines) {
-            for (const d of l.dates) {
-                for (let k = 0; k < l.spotsPerDay; k += 1) {
+            for (const [di, d] of l.dates.entries()) {
+                for (let k = 0; k < l.spotsOn[di]; k += 1) {
                     docs.push({
                         bookingReference: generateBookingReference(),
                         campaignId: campaign._id,
@@ -187,6 +196,7 @@ const checkoutPlan = async (req, res) => {
             userId: req.user._id, companyId: owner.companyId || null, action: 'CREATE_PAYMENT', entityType: 'PAYMENT', entityId: payment._id,
             metadata: { event: 'MEDIA_PLAN', spots: plan.totals.spots, stations: plan.totals.stations, total },
         }).catch(() => {});
+        if (onBooked) await Promise.resolve(onBooked()).catch(() => {});
         await notifyPlanBooked({ payment, campaign, lines: plan.lines, totals: plan.totals });
 
         return res.status(201).json({
@@ -279,6 +289,30 @@ const acceptOrder = async (req, res) => {
     }
 };
 
+// ── Media house: schedule every accepted spot at once ──
+// Optional: stationId (one media house) or bookingIds (just these).
+const scheduleAll = async (req, res) => {
+    try {
+        const stations = await Station.find({}).select('name managerIds companyId');
+        let mine = stations.filter((s) => ownsStation(req, s)).map((s) => String(s._id));
+        if (req.body?.stationId) mine = mine.filter((id) => id === String(req.body.stationId));
+        if (!mine.length) return res.status(404).json({ success: false, message: 'No media house found' });
+        const only = Array.isArray(req.body?.bookingIds) && req.body.bookingIds.length ? req.body.bookingIds.filter(isId) : null;
+        const filter = { stationId: { $in: mine }, status: 'ACCEPTED', ...(only ? { _id: { $in: only } } : {}) };
+        const targets = await Booking.find(filter).select('_id');
+        if (!targets.length) return res.status(400).json({ success: false, message: 'No accepted spots to schedule' });
+        const ids = targets.map((b) => b._id);
+        await Booking.updateMany({ _id: { $in: ids }, status: 'ACCEPTED' }, { $set: { status: 'SCHEDULED' } });
+        const updated = await Booking.find({ _id: { $in: ids } });
+        await AuditLog.create({ userId: req.user._id, action: 'SCHEDULE_BOOKING', entityType: 'BOOKING', entityId: ids[0], metadata: { event: 'SCHEDULE_ALL', count: ids.length } }).catch(() => {});
+        await notifyPlanStatus(updated, { kind: 'SCHEDULED' });
+        return res.json({ success: true, message: `${ids.length} spot${ids.length === 1 ? '' : 's'} scheduled`, data: { scheduled: ids.length } });
+    } catch (error) {
+        console.error('❌ Schedule all error:', error.name, error.message);
+        return res.status(500).json({ success: false, message: 'Failed to schedule the spots' });
+    }
+};
+
 // ── Media house: one day's spots aired, with one TX log and one clip ──
 const markDayAired = async (req, res) => {
     try {
@@ -319,56 +353,113 @@ const markDayAired = async (req, res) => {
     }
 };
 
-// ── Admin: volume discounts per media house and programme ──
-const getVolumeDiscounts = async (req, res) => {
+// ── The plan cart: drafts saved as they are built ──
+const draftScope = (req) => {
+    const owner = advertiserOwner(req);
+    return owner.companyId ? { companyId: owner.companyId } : { companyId: null, userId: owner.userId };
+};
+
+const cleanLines = (lines) => (Array.isArray(lines) ? lines : []).slice(0, 300)
+    .filter((l) => l && isId(l.stationId) && isId(l.rateId))
+    .map((l) => ({
+        stationId: l.stationId,
+        rateId: l.rateId,
+        spotsByDay: readSpotsByDay(l).map((n) => (Number.isInteger(n) && n >= 0 && n <= 20 ? n : 0)),
+        startDate: typeof l.startDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(l.startDate) ? l.startDate : null,
+        endDate: typeof l.endDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(l.endDate) ? l.endDate : null,
+    }));
+
+const draftBody = (d) => ({
+    campaignId: String(d.campaignId),
+    creativeId: d.creativeId ? String(d.creativeId) : undefined,
+    lines: (d.lines || []).map((l) => ({ stationId: String(l.stationId), rateId: String(l.rateId), spotsByDay: [...l.spotsByDay], startDate: l.startDate || undefined, endDate: l.endDate || undefined })),
+});
+
+// GET /media-plans/drafts — every plan in the cart, priced, with the wallet.
+const getDrafts = async (req, res) => {
     try {
-        const stations = await Station.find({ isActive: true, approvalStatus: 'APPROVED' }).select('name type location volumeDiscount rateCard');
-        const data = stations.map((s) => {
-            const programmes = new Map();
-            for (const r of s.rateCard || []) {
-                if (!r || r.isActive === false) continue;
-                const key = programmeKey(r);
-                if (!programmes.has(key)) programmes.set(key, { key, name: r.name, kind: r.kind, startTime: r.startTime || null, endTime: r.endTime || null, size: r.size || null, lengths: [] });
-                if (r.spotSeconds) programmes.get(key).lengths.push(r.spotSeconds);
-            }
-            const overrides = new Map((s.volumeDiscount?.programmes || []).map((p) => [p.key, p.percent]));
-            return {
-                _id: s._id, name: s.name, type: s.type, state: s.location?.state || null,
-                percent: Number(s.volumeDiscount?.percent || 0),
-                programmes: [...programmes.values()].map((p) => ({ ...p, lengths: [...new Set(p.lengths)].sort((a, b) => b - a), percent: overrides.has(p.key) ? overrides.get(p.key) : null })),
-            };
-        }).sort((a, b) => a.name.localeCompare(b.name));
-        return res.json({ success: true, data });
+        const drafts = (await PlanDraft.find(draftScope(req))).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+        const wallet = await getOrCreateWallet(advertiserOwner(req));
+        const out = [];
+        for (const d of drafts) {
+            const campaign = await Campaign.findOne({ _id: d.campaignId, ...advertiserScope(req) }).select('name startDate endDate status');
+            if (!campaign) continue;
+            const ctx = d.lines.length ? await preparePlan(req, draftBody(d)) : null;
+            out.push({
+                _id: d._id,
+                campaign: { _id: campaign._id, name: campaign.name, startDate: campaign.startDate, endDate: campaign.endDate, status: campaign.status },
+                creativeId: d.creativeId,
+                lines: draftBody(d).lines,
+                updatedAt: d.updatedAt,
+                quote: ctx && !ctx.status ? { lines: ctx.plan.lines.map(publicLine), totals: ctx.plan.totals, errors: ctx.plan.errors, isAgency: ctx.isAgency } : null,
+            });
+        }
+        const needed = round2(out.reduce((t, d) => t + (d.quote?.totals?.total || 0), 0));
+        return res.json({ success: true, data: { drafts: out, needed, wallet: { balance: round2(wallet.balance || 0), shortfall: round2(Math.max(0, needed - (wallet.balance || 0))) } } });
     } catch (error) {
-        console.error('❌ Volume discounts error:', error.name, error.message);
-        return res.status(500).json({ success: false, message: 'Failed to load volume discounts' });
+        console.error('❌ Drafts error:', error.name, error.message);
+        return res.status(500).json({ success: false, message: 'Failed to load your cart' });
     }
 };
 
-const setVolumeDiscount = async (req, res) => {
+// GET /media-plans/drafts/:campaignId — one saved plan (to keep editing it).
+const getDraft = async (req, res) => {
     try {
-        if (!isId(req.params.id)) return res.status(400).json({ success: false, message: 'Invalid station ID' });
-        const station = await Station.findById(req.params.id).select('name rateCard volumeDiscount');
-        if (!station) return res.status(404).json({ success: false, message: 'Station not found' });
-        const pct = (v) => { const n = Number(v); return Number.isFinite(n) && n >= 0 && n <= 90 ? Math.round(n * 100) / 100 : NaN; };
-        const percent = pct(req.body?.percent ?? 0);
-        if (Number.isNaN(percent)) return res.status(400).json({ success: false, message: 'Volume discount must be 0 to 90%' });
-        const keys = new Set((station.rateCard || []).filter(Boolean).map(programmeKey));
-        const programmes = [];
-        for (const p of Array.isArray(req.body?.programmes) ? req.body.programmes : []) {
-            if (!p || p.percent === null || p.percent === '' || p.percent === undefined) continue; // uses the media house's default
-            if (!keys.has(p.key)) return res.status(400).json({ success: false, message: 'Unknown programme on this rate card' });
-            const v = pct(p.percent);
-            if (Number.isNaN(v)) return res.status(400).json({ success: false, message: 'Volume discount must be 0 to 90%' });
-            programmes.push({ key: p.key, name: String(p.name || p.key.split('|')[0]).slice(0, 120), percent: v });
-        }
-        const volumeDiscount = { percent, programmes };
-        await Station.updateOne({ _id: station._id }, { $set: { volumeDiscount } });
-        await AuditLog.create({ userId: req.user._id, action: 'UPDATE_STATION', entityType: 'STATION', entityId: station._id, metadata: { event: 'VOLUME_DISCOUNT', percent, programmes: programmes.length } }).catch(() => {});
-        return res.json({ success: true, message: `Volume discount saved for ${station.name}`, data: volumeDiscount });
+        if (!isId(req.params.campaignId)) return res.status(400).json({ success: false, message: 'Invalid campaign' });
+        const d = await PlanDraft.findOne({ ...draftScope(req), campaignId: req.params.campaignId });
+        return res.json({ success: true, data: d ? draftBody(d) : null });
     } catch (error) {
-        console.error('❌ Set volume discount error:', error.name, error.message);
-        return res.status(500).json({ success: false, message: 'Failed to save the volume discount' });
+        return res.status(500).json({ success: false, message: 'Failed to load the plan' });
+    }
+};
+
+// PUT /media-plans/drafts/:campaignId — save the plan as it is built.
+const saveDraft = async (req, res) => {
+    try {
+        if (!isId(req.params.campaignId)) return res.status(400).json({ success: false, message: 'Invalid campaign' });
+        const campaign = await Campaign.findOne({ _id: req.params.campaignId, ...advertiserScope(req) }).select('_id');
+        if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found' });
+        const lines = cleanLines(req.body?.lines);
+        const creativeId = isId(req.body?.creativeId) ? req.body.creativeId : null;
+        const scope = draftScope(req);
+        const existing = await PlanDraft.findOne({ ...scope, campaignId: campaign._id });
+        if (!lines.length) {
+            if (existing) await PlanDraft.deleteOne({ _id: existing._id });
+            return res.json({ success: true, message: 'Plan removed from the cart', data: null });
+        }
+        if (existing) {
+            await PlanDraft.updateOne({ _id: existing._id }, { $set: { lines, creativeId } });
+        } else {
+            await PlanDraft.create({ ...scope, userId: advertiserOwner(req).userId, campaignId: campaign._id, lines, creativeId });
+        }
+        return res.json({ success: true, message: 'Saved to your cart', data: { lines: lines.length } });
+    } catch (error) {
+        console.error('❌ Save draft error:', error.name, error.message);
+        return res.status(500).json({ success: false, message: 'Failed to save the plan' });
+    }
+};
+
+const deleteDraft = async (req, res) => {
+    try {
+        if (!isId(req.params.campaignId)) return res.status(400).json({ success: false, message: 'Invalid campaign' });
+        await PlanDraft.deleteMany({ ...draftScope(req), campaignId: req.params.campaignId });
+        return res.json({ success: true, message: 'Plan removed from the cart' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: 'Failed to remove the plan' });
+    }
+};
+
+// POST /media-plans/drafts/:campaignId/checkout — book the saved plan.
+const checkoutDraft = async (req, res) => {
+    try {
+        if (!isId(req.params.campaignId)) return res.status(400).json({ success: false, message: 'Invalid campaign' });
+        const d = await PlanDraft.findOne({ ...draftScope(req), campaignId: req.params.campaignId });
+        if (!d || !d.lines.length) return res.status(404).json({ success: false, message: 'This plan is not in your cart' });
+        // Book it; once booked, the plan leaves the cart.
+        return checkoutPlan(req, res, draftBody(d), { onBooked: () => PlanDraft.deleteOne({ _id: d._id }) });
+    } catch (error) {
+        console.error('❌ Draft checkout error:', error.name, error.message);
+        return res.status(500).json({ success: false, message: 'The plan could not be booked. You have not been charged.' });
     }
 };
 
@@ -377,7 +468,11 @@ module.exports = {
     checkoutPlan,
     getCampaignTracker,
     acceptOrder,
+    scheduleAll,
     markDayAired,
-    getVolumeDiscounts,
-    setVolumeDiscount,
+    getDrafts,
+    getDraft,
+    saveDraft,
+    deleteDraft,
+    checkoutDraft,
 };

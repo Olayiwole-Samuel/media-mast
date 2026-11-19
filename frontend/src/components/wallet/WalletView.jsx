@@ -55,6 +55,8 @@ export default function WalletView() {
     const { loading, error, data, wallet, reload } = useWallet();
 
     const [amount, setAmount] = useState(() => digits(params.get("fund")));
+    // Where to go back to after funding (the cart or the plan being built). Same-site paths only.
+    const back = (() => { const b = params.get("back") || ""; return b.startsWith("/") && !b.startsWith("//") ? b : ""; })();
     const [funding, setFunding] = useState(false);
     const [notice, setNotice] = useState(null);
     const [threshold, setThreshold] = useState("");
@@ -146,6 +148,13 @@ export default function WalletView() {
                 <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
                     <AlertTriangle className="h-5 w-5 shrink-0" />
                     <p>Your balance is below your {formatMoney(wallet.lowBalanceThreshold, currency)} alert. Fund your wallet so your next bookings go through.</p>
+                </div>
+            )}
+
+            {back && (
+                <div className="flex flex-col gap-2 rounded-xl border border-emerald-200 bg-white p-3 text-sm sm:flex-row sm:items-center sm:justify-between dark:border-emerald-500/20 dark:bg-slate-900">
+                    <p className="text-slate-600 dark:text-slate-300">Your plan is saved. Fund your wallet, then go back and pay.</p>
+                    <Link href={back} className="inline-flex shrink-0 items-center justify-center rounded-lg bg-emerald-500 px-4 py-2 font-medium text-white hover:bg-emerald-600">Back to your plan</Link>
                 </div>
             )}
 

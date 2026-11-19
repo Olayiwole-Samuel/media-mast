@@ -681,9 +681,25 @@ export const acceptStationOrder = async (paymentId, note) =>
     authFetch(`/api/v1/station-portal/orders/${paymentId}/accept`, { method: 'PATCH', body: JSON.stringify({ note }) });
 export const markStationDayAired = async (stationId, { date, logUploadId, clipUploadId, note }) =>
     authFetch(`/api/v1/station-portal/stations/${stationId}/aired-day`, { method: 'PATCH', body: JSON.stringify({ date, logUploadId, clipUploadId, note }) });
-export const getAdminVolumeDiscounts = async () => authFetch('/api/v1/admin/volume-discounts');
-export const setAdminVolumeDiscount = async (stationId, { percent, programmes }) =>
-    authFetch(`/api/v1/admin/stations/${stationId}/volume-discount`, { method: 'PUT', body: JSON.stringify({ percent, programmes }) });
+// The plan cart: saved as it's built (survives leaving to fund the wallet).
+export const getPlanDrafts = async () => authFetch('/api/v1/media-plans/drafts');
+export const getPlanDraft = async (campaignId) => authFetch(`/api/v1/media-plans/drafts/${campaignId}`);
+export const savePlanDraft = async (campaignId, { lines, creativeId }) =>
+    authFetch(`/api/v1/media-plans/drafts/${campaignId}`, { method: 'PUT', body: JSON.stringify({ lines, creativeId }) });
+export const deletePlanDraft = async (campaignId) => authFetch(`/api/v1/media-plans/drafts/${campaignId}`, { method: 'DELETE' });
+export const checkoutPlanDraft = async (campaignId) => authFetch(`/api/v1/media-plans/drafts/${campaignId}/checkout`, { method: 'POST', body: JSON.stringify({}) });
+export const scheduleAllStationBookings = async (stationId) =>
+    authFetch('/api/v1/station-portal/schedule-all', { method: 'PATCH', body: JSON.stringify(stationId ? { stationId } : {}) });
+
+// Volume discounts: the agency's agreement with each media house, confirmed by the media house.
+export const getVolumeAgreements = async () => authFetch('/api/v1/volume-agreements');
+export const saveVolumeAgreement = async (stationId, { percent, programmes, note }) =>
+    authFetch(`/api/v1/volume-agreements/${stationId}`, { method: 'PUT', body: JSON.stringify({ percent, programmes, note }) });
+export const deleteVolumeAgreement = async (stationId) => authFetch(`/api/v1/volume-agreements/${stationId}`, { method: 'DELETE' });
+export const getStationVolumeAgreements = async () => authFetch('/api/v1/station-portal/volume-agreements');
+export const decideVolumeAgreement = async (id, { decision, note }) =>
+    authFetch(`/api/v1/station-portal/volume-agreements/${id}`, { method: 'PATCH', body: JSON.stringify({ decision, note }) });
+export const getAdminVolumeAgreements = async () => authFetch('/api/v1/admin/volume-agreements');
 export const setStationPayoutAccount = async (stationId, account) =>
     authFetch(`/api/v1/station-portal/stations/${stationId}/payout-account`, { method: 'PUT', body: JSON.stringify(account) });
 export const requestStationPayout = async (stationId, amount) =>

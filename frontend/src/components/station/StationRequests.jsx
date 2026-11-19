@@ -13,6 +13,7 @@ import {
     markStationBookingAired,
     markStationBookingNotAired,
     uploadFileInParts,
+    scheduleAllStationBookings,
 } from "@/lib/api";
 import { bookingStatus, formatMoney, formatDate, spotHasAired, ESCROW_STATUS } from "@/lib/status";
 import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/PageState";
@@ -274,12 +275,28 @@ export default function StationRequests({ wrapperClassName = "p-4 sm:p-6 lg:p-8"
         load();
     }, [load]);
 
+    // Earliest spot first (date, then time).
     const visible = useMemo(() => bookings.filter((b) => {
         if (filter === "ALL") return true;
         if (filter === "ACTION") return NEEDS_ACTION.includes(b.status);
         if (filter === "CLOSED") return ["REJECTED", "CANCELLED", "CHANGES_REQUESTED", "NOT_AIRED"].includes(b.status);
         return b.status === filter;
-    }), [bookings, filter]);
+    }).sort((a, b) => String(a.date).slice(0, 10).localeCompare(String(b.date).slice(0, 10)) || String(a.time || "").localeCompare(String(b.time || ""))), [bookings, filter]);
+    const acceptedCount = bookings.filter((b) => b.status === "ACCEPTED").length;
+    const [schedulingAll, setSchedulingAll] = useState(false);
+    const scheduleAll = async () => {
+        setSchedulingAll(true);
+        setNotice(null);
+        try {
+            const res = await scheduleAllStationBookings();
+            setNotice({ type: "success", text: res?.message || "All accepted spots scheduled." });
+            await load();
+        } catch (err) {
+            setNotice({ type: "error", text: err?.message || "Couldn't schedule them." });
+        } finally {
+            setSchedulingAll(false);
+        }
+    };
 
     const handleAction = async (action, booking, extra = {}) => {
         setBusyId(booking._id);
@@ -299,7 +316,8 @@ export default function StationRequests({ wrapperClassName = "p-4 sm:p-6 lg:p-8"
             const result = await calls[action]();
             const updated = result?.data || {};
             // Keep populated fields (station, campaign, advertiser) from the list.
-            setBookings((prev) => prev.map((b) => (b._id === booking._id ? { ...b, ...updated, stationId: b.stationId, campaignId: b.campaignId, companyId: b.companyId, userId: b.userId, paymentId: b.paymentId } : b)));
+            // The server returns ids only: keep the populated advert, station, campaign and advertiser.
+            setBookings((prev) => prev.map((b) => (b._id === booking._id ? { ...b, ...updated, stationId: b.stationId, campaignId: b.campaignId, companyId: b.companyId, userId: b.userId, paymentId: b.paymentId, creativeId: b.creativeId } : b)));
             setNotice({ type: "success", text: result?.message || "Booking updated." });
         } catch (err) {
             setNotice({
@@ -344,6 +362,14 @@ export default function StationRequests({ wrapperClassName = "p-4 sm:p-6 lg:p-8"
             ) : (
                 <div className="space-y-4">
                     <StationBulkPanels bookings={bookings} onChanged={(text) => { setNotice({ type: "success", text }); load(); }} />
+                    {acceptedCount > 0 && (
+                        <div className="flex flex-col gap-2 rounded-2xl border border-sky-200 bg-sky-50 p-3 text-sm sm:flex-row sm:items-center sm:justify-between dark:border-sky-500/20 dark:bg-sky-500/10">
+                            <p className="text-sky-900 dark:text-sky-200">{acceptedCount} accepted spot{acceptedCount === 1 ? "" : "s"} waiting to be scheduled.</p>
+                            <button type="button" disabled={schedulingAll} onClick={scheduleAll} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-2 font-medium text-white hover:bg-sky-700 disabled:opacity-60">
+                                {schedulingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarCheck className="h-4 w-4" />} Schedule all {acceptedCount}
+                            </button>
+                        </div>
+                    )}
                     <div className="flex gap-2 overflow-x-auto pb-1">
                         {FILTERS.map((f) => (
                             <button key={f.value} type="button" onClick={() => setFilter(f.value)} className={`shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${filter === f.value ? "bg-emerald-500 text-white" : "bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"}`}>

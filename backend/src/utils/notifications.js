@@ -492,6 +492,8 @@ const notifyPayoutDecided = safely('payout decided', async (request, station) =>
 // ── Media plans ──
 const fmtDay = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// "Mon 2, Tue 1, Thu 3" (Monday first).
+const perDay = (spotsByDay) => [1, 2, 3, 4, 5, 6, 0].filter((d) => (spotsByDay || [])[d] > 0).map((d) => `${DAY_SHORT[d]} ${spotsByDay[d]}`).join(', ');
 
 // One message per media house (its order) and one to the advertiser.
 const notifyPlanBooked = safely('plan booked', async ({ payment, campaign, lines, totals }) => {
@@ -502,7 +504,7 @@ const notifyPlanBooked = safely('plan booked', async ({ payment, campaign, lines
             paragraphs: [
                 `"${campaign.name}": ${totals.spots} spots on ${totals.stations} media house${totals.stations === 1 ? '' : 's'}, ${fmtDay(totals.firstDate)} to ${fmtDay(totals.lastDate)}.`,
                 `${money(totals.total, payment.currency)} (net ${money(totals.net, payment.currency)} + VAT ${money(totals.vat, payment.currency)}) is on hold in your wallet. Each media house is paid only as its spots air.`,
-                ...lines.slice(0, 40).map((l) => `${l.station.name} · ${l.rate.name}${l.rate.spotSeconds ? ` ${l.rate.spotSeconds}s` : ''} · ${l.days.map((d) => DAY_SHORT[d]).join('/')} · ${l.spots} spots · ${money(l.totals.total, payment.currency)}`),
+                ...lines.slice(0, 40).map((l) => `${l.station.name} · ${l.rate.name}${l.rate.spotSeconds ? ` ${l.rate.spotSeconds}s` : ''} · ${perDay(l.spotsByDay)} · ${l.spots} spots · ${money(l.totals.total, payment.currency)}`),
             ],
             action: { label: 'Track the campaign', url: appUrl(bookingsPath(user)) },
         });
@@ -527,7 +529,7 @@ const notifyPlanBooked = safely('plan booked', async ({ payment, campaign, lines
         if (emails.length) {
             const { text, html } = renderEmail({
                 heading: `New order for ${station.name}`,
-                paragraphs: [body, ...ls.map((l) => `${l.rate.name}${l.rate.spotSeconds ? ` ${l.rate.spotSeconds}s` : ''} · ${l.days.map((d) => DAY_SHORT[d]).join('/')} · ${l.spotsPerDay} a day · ${l.spots} spots`), 'Accept the whole order on your desk, or decline any dates you cannot take.'],
+                paragraphs: [body, ...ls.map((l) => `${l.rate.name}${l.rate.spotSeconds ? ` ${l.rate.spotSeconds}s` : ''} · ${perDay(l.spotsByDay)} · ${l.spots} spots`), 'Accept the whole order on your desk, or decline any dates you cannot take.'],
                 action: { label: 'Review the order', url: appUrl('/station/requests') },
             });
             await sendEmail({ to: emails, subject: `New order: ${spots} spots for "${campaign.name}"`, text, html });
@@ -550,16 +552,48 @@ const notifyPlanStatus = safely('plan status', async (bookings, { kind, note, da
         const [user, { station }] = await Promise.all([advertiserOf(list[0]), stationContacts(list[0].stationId)]);
         if (!user) continue;
         const name = station ? station.name : 'The media house';
-        const title = kind === 'ACCEPTED' ? `${name} accepted ${list.length} spot${list.length === 1 ? '' : 's'}` : `${name}: ${list.length} spot${list.length === 1 ? '' : 's'} aired${date ? ` on ${fmtDay(date)}` : ''}`;
-        const body = kind === 'ACCEPTED'
-            ? [note ? `Note: ${note}` : null, 'Your money stays on hold and is paid as each spot airs.'].filter(Boolean).join(' ')
-            : airedWindowLine(list[0]);
+        const n = `${list.length} spot${list.length === 1 ? '' : 's'}`;
+        const title = kind === 'ACCEPTED' ? `${name} accepted ${n}` : kind === 'SCHEDULED' ? `${name} scheduled ${n}` : `${name}: ${n} aired${date ? ` on ${fmtDay(date)}` : ''}`;
+        const body = kind === 'AIRED'
+            ? airedWindowLine(list[0])
+            : [note ? `Note: ${note}` : null, 'Your money stays on hold and is paid as each spot airs.'].filter(Boolean).join(' ');
         await pushInApp([user], { type: 'BOOKING_STATUS', title, body, link: bookingsPath(user) });
         if (kind === 'AIRED') {
             const { text, html } = renderEmail({ heading: title, paragraphs: [body], action: { label: 'Check the proof', url: appUrl(bookingsPath(user)) } });
             await sendEmail({ to: user.email, subject: title, text, html });
         }
     }
+    return true;
+});
+
+// ── Volume discount agreements (agency ↔ media house) ──
+const notifyAgreementRequested = safely('agreement requested', async (agreement, { agencyName, station }) => {
+    const { users, emails } = await stationContacts(station._id);
+    const what = `${agencyName} says it has a ${agreement.percent}% volume discount with ${station.name}${agreement.programmes?.length ? ` (and ${agreement.programmes.length} programme rate${agreement.programmes.length === 1 ? '' : 's'})` : ''}.`;
+    await pushInApp(users, { type: 'ACCOUNT', title: `Confirm ${agencyName}'s volume discount`, body: `${what} Confirm it so it applies to their bookings.`, link: '/station/discounts', ref: `agreement:${agreement._id}` });
+    if (emails.length) {
+        const { text, html } = renderEmail({
+            heading: `Please confirm ${agencyName}'s volume discount`,
+            paragraphs: [what, ...(agreement.agencyNote ? [`Their note: "${agreement.agencyNote}"`] : []), 'It only applies to their plans once you confirm it.'],
+            action: { label: 'Review', url: appUrl('/station/discounts') },
+        });
+        await sendEmail({ to: emails, subject: `Confirm ${agencyName}'s volume discount`, text, html });
+    }
+    return true;
+});
+
+const notifyAgreementDecided = safely('agreement decided', async (agreement, { station }) => {
+    const owners = await User.find({ companyId: agreement.companyId, accountType: 'COMPANY', status: 'ACTIVE' }).select('_id email');
+    const ok = agreement.status === 'APPROVED';
+    const title = ok ? `${station.name} confirmed your ${agreement.percent}% volume discount` : `${station.name} did not confirm your volume discount`;
+    const body = ok ? 'It now applies to your plans with them.' : (agreement.stationNote ? `Reason: ${agreement.stationNote}` : 'Check the figures and send it again.');
+    await pushInApp(owners, { type: 'ACCOUNT', title, body, link: '/company/discounts' });
+    const emails = owners.map((o) => o.email).filter(Boolean);
+    if (emails.length) {
+        const { text, html } = renderEmail({ heading: title, paragraphs: [body], action: { label: 'Volume discounts', url: appUrl('/company/discounts') } });
+        await sendEmail({ to: emails, subject: title, text, html });
+    }
+    await resolveNotifications(`agreement:${agreement._id}`);
     return true;
 });
 
@@ -605,6 +639,8 @@ module.exports = {
     notifyPayoutDecided,
     notifyPlanBooked,
     notifyPlanStatus,
+    notifyAgreementRequested,
+    notifyAgreementDecided,
     notifyVerificationSubmitted,
     notifyVerificationDecision,
     notifyCheckout,
