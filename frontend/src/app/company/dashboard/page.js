@@ -9,6 +9,9 @@ import { useSession, isCompanyOwner } from "@/lib/auth";
 import { campaignStatus, bookingStatus, formatMoney, formatDate } from "@/lib/status";
 import { PageLoading, PageError } from "@/components/common/PageState";
 import WalletCard from "@/components/wallet/WalletCard";
+import PlanSummaryCard from "@/components/dashboard/PlanSummaryCard";
+import OnboardingChecklist from "@/components/dashboard/OnboardingChecklist";
+import { advertiserPaths } from "@/lib/cart";
 
 // Company dashboard: everything shown comes from GET /company/dashboard
 // (needs ANALYTICS_VIEW; owners have it through ALL_ACCESS).
@@ -140,7 +143,9 @@ export default function CompanyDashboardPage() {
             <div className="w-full space-y-6 p-4 sm:p-6 lg:p-8">
                 {header}
 
+                <OnboardingChecklist />
                 <WalletCard />
+                <PlanSummaryCard paths={advertiserPaths(user)} />
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <StatCard label="Total spend" value={formatMoney(stats.totalSpend || 0)} icon={CreditCard} tone="bg-emerald-50 text-emerald-500 dark:bg-emerald-500/10" />

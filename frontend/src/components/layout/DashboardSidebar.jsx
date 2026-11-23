@@ -33,6 +33,7 @@ const NAV_ITEMS = [
     { label: "Stations", href: "/stations", icon: Radio },
     { label: "Cart", href: "/cart", icon: ShoppingCart },
     { label: "Wallet", href: "/wallet", icon: Wallet },
+    { label: "Invoices", href: "/invoices", icon: FolderOpen },
     { label: "Bookings", href: "/bookings", icon: CalendarDays },
     { label: "Documents", href: "/documents", icon: FolderOpen },
     { label: "My plan", href: "/subscription", icon: Gem },

@@ -139,54 +139,15 @@ export default function CartView() {
                     }
                 />
             )) : (
-                <div className="space-y-6">
-                    {cart.count >= MAX_CART_ITEMS && (
-                        <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
-                            Your cart is full ({MAX_CART_ITEMS} spots). Check out a campaign before adding more.
-                        </p>
-                    )}
-                    {groups.map((group) => {
-                        const total = estimateTotal(group.items, discountOptions);
-                        return (
-                            <section key={group.campaignId} className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-                                <header className="flex flex-col justify-between gap-2 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center dark:border-slate-800">
-                                    <div>
-                                        <p className="text-xs uppercase tracking-wide text-slate-400">Campaign</p>
-                                        <h2 className="font-semibold text-slate-900 dark:text-white">{group.campaignName}</h2>
-                                    </div>
-                                    <p className="text-sm text-slate-500 dark:text-slate-400">
-                                        {group.items.length} spot{group.items.length === 1 ? "" : "s"} ·{" "}
-                                        {new Set(group.items.map((i) => i.stationId)).size} station{new Set(group.items.map((i) => i.stationId)).size === 1 ? "" : "s"}
-                                    </p>
-                                </header>
-                                <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-                                    {group.items.map((item) => (
-                                        <CartItemRow key={item.id} item={item} onRemove={cart.removeItem} />
-                                    ))}
-                                </ul>
-                                <footer className="flex flex-col justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center dark:border-slate-800 dark:bg-slate-800/40">
-                                    <p className="text-sm text-slate-600 dark:text-slate-300">
-                                        Estimated total:{" "}
-                                        {total.discount > 0 && <span className="mr-1 text-slate-400 line-through">{formatMoney(total.amount, total.currency)}</span>}
-                                        <span className="font-semibold text-slate-900 dark:text-white">{formatMoney(total.total, total.currency)}</span>
-                                        <span className="block text-xs text-slate-400">incl. {total.vatPercent}% VAT ({formatMoney(total.vat, total.currency)})</span>
-                                        {total.discount > 0 && (
-                                            <span className="block text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                                                {total.discountPercent}% off ({total.stationCount} stations{discountOptions.planPercent ? ` + ${discountOptions.planName} plan` : ""})
-                                            </span>
-                                        )}
-                                        <span className="block text-xs text-slate-400">Prices are confirmed by each station&apos;s rate at checkout.</span>
-                                    </p>
-                                    <Link
-                                        href={`${paths.checkout}?campaign=${encodeURIComponent(group.campaignId)}`}
-                                        className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600"
-                                    >
-                                        Checkout <ArrowRight className="h-4 w-4" />
-                                    </Link>
-                                </footer>
-                            </section>
-                        );
-                    })}
+                // The old single-date cart is retired: plans are booked from the plan cart above.
+                <div className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-4 text-sm sm:flex-row sm:items-center sm:justify-between dark:border-slate-800 dark:bg-slate-900">
+                    <p className="text-slate-600 dark:text-slate-300">
+                        {cart.count} spot{cart.count === 1 ? "" : "s"} from the old one-date booking page {cart.count === 1 ? "is" : "are"} still saved on this device. Booking now works as a media plan: rebuild {cart.count === 1 ? "it" : "them"} on Book airtime.
+                    </p>
+                    <div className="flex shrink-0 gap-2">
+                        <Link href={paths.book} className="rounded-lg bg-emerald-500 px-3 py-2 font-medium text-white hover:bg-emerald-600">Book airtime</Link>
+                        <button type="button" onClick={() => groups.forEach((g) => cart.clearCampaign(g.campaignId))} className="rounded-lg border border-slate-200 px-3 py-2 font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">Clear them</button>
+                    </div>
                 </div>
             )}
         </div>

@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Loader2, Wallet as WalletIcon, Pencil, Trash2, CheckCircle2, AlertTriangle, CalendarRange } from "lucide-react";
-import { getPlanDrafts, checkoutPlanDraft, deletePlanDraft } from "@/lib/api";
+import { Loader2, Wallet as WalletIcon, Pencil, Trash2, CheckCircle2, AlertTriangle, CalendarRange, Link2, FileSpreadsheet, MessageSquare, Clock3 } from "lucide-react";
+import { getPlanDrafts, checkoutPlanDraft, deletePlanDraft, sharePlanDraft, saveProtectedFile, draftPlanXlsxPath } from "@/lib/api";
 import { formatMoney } from "@/lib/status";
 import { walletChanged } from "@/lib/wallet";
 import { announceDataChanged } from "@/lib/events";
@@ -54,6 +54,18 @@ export default function PlanCart({ paths, onCount }) {
             await load();
         } finally { setBusy(null); }
     };
+    const share = async (d) => {
+        setBusy(d.campaign._id); setMessage(null);
+        try {
+            const res = await sharePlanDraft(d.campaign._id);
+            const url = `${window.location.origin}${res.data.path}`;
+            try { await navigator.clipboard.writeText(url); setMessage({ type: "success", text: `Review link copied. Send it to your client: ${url}` }); }
+            catch { setMessage({ type: "success", text: `Send this link to your client: ${url}` }); }
+            await load();
+        } catch (err) {
+            setMessage({ type: "error", text: err?.message || "Couldn't create the link." });
+        } finally { setBusy(null); }
+    };
     const remove = async (d) => {
         setBusy(d.campaign._id);
         try { await deletePlanDraft(d.campaign._id); await load(); } finally { setBusy(null); }
@@ -87,11 +99,24 @@ export default function PlanCart({ paths, onCount }) {
                                 <p className="font-semibold text-slate-900 dark:text-white">{d.campaign.name}</p>
                                 <p className="flex items-center gap-1 text-xs text-slate-500"><CalendarRange className="h-3.5 w-3.5" /> {prettyDate(d.campaign.startDate)} to {prettyDate(d.campaign.endDate || d.campaign.startDate)}</p>
                             </div>
-                            <div className="flex gap-2">
+                            <div className="flex flex-wrap gap-2">
+                                <button type="button" disabled={busy === d.campaign._id} onClick={() => share(d)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200"><Link2 className="h-3.5 w-3.5" /> {d.share ? "Copy client link" : "Send to client"}</button>
+                                <button type="button" onClick={() => saveProtectedFile(draftPlanXlsxPath(d.campaign._id), `${d.campaign.name}-media-plan.xlsx`).catch(() => {})} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200"><FileSpreadsheet className="h-3.5 w-3.5" /> Excel</button>
                                 <Link href={`${paths.book}?campaign=${d.campaign._id}`} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200"><Pencil className="h-3.5 w-3.5" /> Edit plan</Link>
                                 <button type="button" disabled={busy === d.campaign._id} onClick={() => remove(d)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
                             </div>
                         </div>
+                        {d.share && (
+                            <div className={`flex items-start gap-2 border-b px-4 py-2 text-sm ${d.share.changedSince ? "border-amber-100 bg-amber-50 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200" : d.share.decision === "APPROVED" ? "border-emerald-100 bg-emerald-50 text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200" : d.share.decision === "CHANGES_REQUESTED" ? "border-amber-100 bg-amber-50 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200" : "border-slate-100 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-300"}`}>
+                                {d.share.decision === "APPROVED" && !d.share.changedSince ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : d.share.decision === "CHANGES_REQUESTED" ? <MessageSquare className="mt-0.5 h-4 w-4 shrink-0" /> : <Clock3 className="mt-0.5 h-4 w-4 shrink-0" />}
+                                <span>
+                                    {d.share.changedSince ? `${d.share.name} approved an earlier version; you've changed the plan since. Send the link again.`
+                                        : d.share.decision === "APPROVED" ? `Approved by ${d.share.name}.`
+                                            : d.share.decision === "CHANGES_REQUESTED" ? `${d.share.name} asked for changes: "${d.share.comment}"`
+                                                : "Sent to your client: waiting for their review."}
+                                </span>
+                            </div>
+                        )}
                         <ul className="divide-y divide-slate-100 dark:divide-slate-800">
                             {(d.quote?.lines || []).map((l) => (
                                 <li key={l.index} className="flex flex-col gap-1 px-4 py-2.5 text-sm sm:flex-row sm:items-center sm:justify-between">

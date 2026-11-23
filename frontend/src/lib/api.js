@@ -1,12 +1,9 @@
-import { clearSession } from '@/lib/auth';
+import { clearSession, readToken } from '@/lib/auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 // ── Helper to get auth token ──
-const getToken = () => {
-    if (typeof window === 'undefined') return null;
-    return localStorage.getItem('token');
-};
+const getToken = () => readToken();
 
 // ── Error carrying the HTTP status (401 / 403 / 404 / 409 …) ──
 export class ApiError extends Error {
@@ -700,6 +697,27 @@ export const getStationVolumeAgreements = async () => authFetch('/api/v1/station
 export const decideVolumeAgreement = async (id, { decision, note }) =>
     authFetch(`/api/v1/station-portal/volume-agreements/${id}`, { method: 'PATCH', body: JSON.stringify({ decision, note }) });
 export const getAdminVolumeAgreements = async () => authFetch('/api/v1/admin/volume-agreements');
+
+// ── Plan tools: bulk changes, exports, approval links, invoices, reports ──
+export const bulkCampaignSpots = async (campaignId, body) =>
+    authFetch(`/api/v1/campaigns/${campaignId}/bulk`, { method: 'POST', body: JSON.stringify(body) });
+export const bulkStationSpots = async (body) => authFetch('/api/v1/station-portal/bulk', { method: 'PATCH', body: JSON.stringify(body) });
+export const getPlanSummary = async () => authFetch('/api/v1/media-plans/summary');
+export const campaignPlanXlsxPath = (campaignId) => `/api/v1/campaigns/${campaignId}/plan.xlsx`;
+export const draftPlanXlsxPath = (campaignId) => `/api/v1/media-plans/drafts/${campaignId}/export`;
+export const sharePlanDraft = async (campaignId) => authFetch(`/api/v1/media-plans/drafts/${campaignId}/share`, { method: 'POST', body: JSON.stringify({}) });
+export const getSharedPlan = async (token) => authFetch(`/api/v1/public/plan-shares/${encodeURIComponent(token)}`);
+export const respondSharedPlan = async (token, { name, decision, comment }) =>
+    authFetch(`/api/v1/public/plan-shares/${encodeURIComponent(token)}/respond`, { method: 'POST', body: JSON.stringify({ name, decision, comment }) });
+export const getCampaignReport = async (campaignId) => authFetch(`/api/v1/campaigns/${campaignId}/report`);
+export const getInvoices = async () => authFetch('/api/v1/invoices');
+export const getInvoice = async (kind, id) => authFetch(`/api/v1/invoices/${kind}/${id}`);
+export const getPlanSources = async () => authFetch('/api/v1/media-plans/sources');
+export const getPlanSource = async (campaignId) => authFetch(`/api/v1/media-plans/sources/${campaignId}`);
+export const getOnboarding = async () => authFetch('/api/v1/onboarding');
+export const getAdminMoneyOverview = async () => authFetch('/api/v1/admin/money-overview');
+export const getSupportAccounts = async (q) => authFetch(`/api/v1/admin/support-accounts${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+export const startSupportView = async (userId) => authFetch('/api/v1/admin/support-view', { method: 'POST', body: JSON.stringify({ userId }) });
 export const setStationPayoutAccount = async (stationId, account) =>
     authFetch(`/api/v1/station-portal/stations/${stationId}/payout-account`, { method: 'PUT', body: JSON.stringify(account) });
 export const requestStationPayout = async (stationId, amount) =>
@@ -759,7 +777,7 @@ export const getMyDocuments = async () => authFetch('/api/v1/documents');
 
 // The file itself is the request body.
 export const uploadDocument = async (file) => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const token = getToken();
     const response = await fetch(`${API_URL}/api/v1/documents`, {
         method: 'POST',
         headers: {
@@ -777,7 +795,7 @@ export const uploadDocument = async (file) => {
 
 // Downloads with the session token and hands the file to the browser.
 export const downloadDocument = async (id, name) => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const token = getToken();
     const response = await fetch(`${API_URL}/api/v1/documents/${id}/download`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
     });

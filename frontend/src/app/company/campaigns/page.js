@@ -31,6 +31,8 @@ import { useSession } from "@/lib/auth";
 import { advertiserPaths } from "@/lib/cart";
 import CancellationDialog from "@/components/bookings/CancellationDialog";
 import CampaignTracker from "@/components/bookings/CampaignTracker";
+import ManageSpots from "@/components/bookings/ManageSpots";
+import { saveProtectedFile, campaignPlanXlsxPath } from "@/lib/api";
 
 // Campaigns for the signed-in company (GET/POST/PUT/DELETE /campaigns,
 // PATCH /campaigns/:id/status). Only status changes the backend allows from
@@ -106,6 +108,8 @@ export default function CompanyCampaignsPage() {
     const [viewLoading, setViewLoading] = useState(false);
     const { user } = useSession();
     const paths = advertiserPaths(user);
+    const [managing, setManaging] = useState(null);
+    const [trackerKey, setTrackerKey] = useState(0);
 
     const [confirm, setConfirm] = useState(null); // { campaign, kind: "delete" | "status", status }
     const [confirming, setConfirming] = useState(false);
@@ -542,8 +546,15 @@ export default function CompanyCampaignsPage() {
                                 <>
                                     {viewing.bookings?.length > 0 && (
                                         <section>
-                                            <h3 className="mb-3 text-xs uppercase tracking-wider text-slate-400">Tracker</h3>
-                                            <CampaignTracker campaignId={viewing._id} />
+                                            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                                                <h3 className="text-xs uppercase tracking-wider text-slate-400">Tracker</h3>
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    <button type="button" onClick={() => setManaging(viewing)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200">Manage spots</button>
+                                                    <button type="button" onClick={() => saveProtectedFile(campaignPlanXlsxPath(viewing._id), `${viewing.name}-media-plan.xlsx`).catch(() => {})} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200">Download plan (Excel)</button>
+                                                    <a href={`/print/report?id=${viewing._id}`} target="_blank" rel="noreferrer" className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200">Airing report</a>
+                                                </div>
+                                            </div>
+                                            <CampaignTracker key={trackerKey} campaignId={viewing._id} />
                                         </section>
                                     )}
                                     <section>
@@ -649,6 +660,8 @@ export default function CompanyCampaignsPage() {
                     </>
                 )}
             </Modal>
+
+            {managing && <ManageSpots campaign={managing} onClose={() => setManaging(null)} onDone={() => { setTrackerKey((k) => k + 1); if (viewing) openView(viewing); }} />}
 
             <CancellationDialog
                 open={!!cancelCampaignTarget}

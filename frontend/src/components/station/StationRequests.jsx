@@ -14,6 +14,7 @@ import {
     markStationBookingNotAired,
     uploadFileInParts,
     scheduleAllStationBookings,
+    bulkStationSpots,
 } from "@/lib/api";
 import { bookingStatus, formatMoney, formatDate, spotHasAired, ESCROW_STATUS } from "@/lib/status";
 import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/PageState";
@@ -41,6 +42,8 @@ const FILTERS = [
 ];
 
 const NEEDS_ACTION = ["PENDING", "ACCEPTED", "SCHEDULED"];
+// Spots that can be declined (new) or sent back to reschedule (new or booked).
+const BULK_STATUSES = ["PENDING", "ACCEPTED", "SCHEDULED"];
 
 const PAYMENT_BADGE = {
     PAID: { label: "Paid", className: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" },
@@ -137,7 +140,7 @@ function AiredPanel({ booking, busy, onAction }) {
     );
 }
 
-function BookingCard({ booking, busy, onAction }) {
+function BookingCard({ booking, busy, onAction, selectable, selected, onSelect }) {
     const [note, setNote] = useState("");
     const [asking, setAsking] = useState(false);
     const [proposedDate, setProposedDate] = useState("");
@@ -148,8 +151,10 @@ function BookingCard({ booking, busy, onAction }) {
     const testPayment = booking.paymentId?.provider === "STUB";
 
     return (
-        <li className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <li className={`rounded-2xl border bg-white p-4 dark:bg-slate-900 ${selected ? "border-emerald-400 ring-1 ring-emerald-400" : "border-slate-200 dark:border-slate-800"}`}>
             <div className="flex flex-col justify-between gap-3 sm:flex-row">
+                <div className="flex min-w-0 gap-3">
+                {selectable && <input type="checkbox" className="mt-1 h-4 w-4 shrink-0 accent-emerald-600" checked={selected} onChange={() => onSelect(booking._id)} aria-label="Select this spot" />}
                 <div className="min-w-0">
                     <p className="font-semibold text-slate-900 dark:text-white">
                         {booking.stationId?.name || "Station"} · {formatDate(booking.date)}{booking.slot === "PROGRAMME" || booking.slot === "EDITION" || booking.slot === "DISPLAY" ? "" : ` from ${booking.time}`}
@@ -159,6 +164,7 @@ function BookingCard({ booking, busy, onAction }) {
                         {booking.campaignId?.name ? ` · ${booking.campaignId.name}` : ""}
                     </p>
                     <p className="mt-0.5 font-mono text-xs text-slate-400">Ref {booking.bookingReference}</p>
+                </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-start gap-2 sm:flex-col sm:items-end">
                     <span className="text-base font-semibold text-slate-900 dark:text-white">{formatMoney(booking.price, booking.currency)}</span>
@@ -283,6 +289,31 @@ export default function StationRequests({ wrapperClassName = "p-4 sm:p-6 lg:p-8"
         return b.status === filter;
     }).sort((a, b) => String(a.date).slice(0, 10).localeCompare(String(b.date).slice(0, 10)) || String(a.time || "").localeCompare(String(b.time || ""))), [bookings, filter]);
     const acceptedCount = bookings.filter((b) => b.status === "ACCEPTED").length;
+
+    // Bulk: tick several spots, then decline (new ones) or ask to reschedule.
+    const [selected, setSelected] = useState(() => new Set());
+    const [bulkNote, setBulkNote] = useState("");
+    const [bulkDate, setBulkDate] = useState("");
+    const [bulkBusy, setBulkBusy] = useState(false);
+    const selectableIds = visible.filter((b) => BULK_STATUSES.includes(b.status)).map((b) => b._id);
+    const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
+    const toggleSelect = (id) => setSelected((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+    const toggleAll = () => setSelected(allSelected ? new Set() : new Set(selectableIds));
+    const canDeclineAll = [...selected].every((id) => bookings.find((b) => b._id === id)?.status === "PENDING");
+    const runBulk = async (action) => {
+        setBulkBusy(true);
+        setNotice(null);
+        try {
+            const res = await bulkStationSpots({ action, bookingIds: [...selected], note: bulkNote, proposedDate: action === "RESCHEDULE" && bulkDate ? bulkDate : undefined });
+            setNotice({ type: "success", text: res?.message || "Done." });
+            setSelected(new Set()); setBulkNote(""); setBulkDate("");
+            await load();
+        } catch (err) {
+            setNotice({ type: "error", text: err?.message || "Couldn't update the spots." });
+        } finally {
+            setBulkBusy(false);
+        }
+    };
     const [schedulingAll, setSchedulingAll] = useState(false);
     const scheduleAll = async () => {
         setSchedulingAll(true);
@@ -380,11 +411,29 @@ export default function StationRequests({ wrapperClassName = "p-4 sm:p-6 lg:p-8"
                     {visible.length === 0 ? (
                         <p className="rounded-xl bg-white p-6 text-center text-sm text-slate-500 dark:bg-slate-900 dark:text-slate-400">Nothing here right now.</p>
                     ) : (
-                        <ul className="space-y-3">
-                            {visible.map((b) => (
-                                <BookingCard key={b._id} booking={b} busy={busyId === b._id} onAction={handleAction} />
-                            ))}
-                        </ul>
+                        <>
+                            {selectableIds.length > 0 && (
+                                <div className="sticky top-2 z-20 flex flex-col gap-2 rounded-2xl border border-slate-200 bg-white/95 p-3 text-sm shadow-sm backdrop-blur sm:flex-row sm:flex-wrap sm:items-center dark:border-slate-800 dark:bg-slate-900/95">
+                                    <label className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                                        <input type="checkbox" className="h-4 w-4 accent-emerald-600" checked={allSelected} onChange={toggleAll} /> {selected.size ? `${selected.size} ticked` : `Tick all ${selectableIds.length}`}
+                                    </label>
+                                    {selected.size > 0 && (
+                                        <>
+                                            <input value={bulkNote} onChange={(e) => setBulkNote(e.target.value)} maxLength={1000} placeholder="Reason (the advertiser sees this)" className="min-w-[200px] flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white" />
+                                            <input type="date" value={bulkDate} onChange={(e) => setBulkDate(e.target.value)} aria-label="Suggested new date" title="Suggested new date (optional)" className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white" />
+                                            <button type="button" disabled={bulkBusy || !bulkNote.trim()} onClick={() => runBulk("RESCHEDULE")} className="rounded-lg bg-amber-500 px-3 py-1.5 font-medium text-white hover:bg-amber-600 disabled:opacity-50">Ask to reschedule</button>
+                                            <button type="button" disabled={bulkBusy || !bulkNote.trim() || !canDeclineAll} title={canDeclineAll ? undefined : "Only new (not yet accepted) spots can be declined; ask to reschedule the others"} onClick={() => runBulk("DECLINE")} className="rounded-lg bg-red-500 px-3 py-1.5 font-medium text-white hover:bg-red-600 disabled:opacity-50">Decline (refund)</button>
+                                        </>
+                                    )}
+                                </div>
+                            )}
+                            <ul className="space-y-3">
+                                {visible.map((b) => (
+                                    <BookingCard key={b._id} booking={b} busy={busyId === b._id} onAction={handleAction}
+                                        selectable={BULK_STATUSES.includes(b.status)} selected={selected.has(b._id)} onSelect={toggleSelect} />
+                                ))}
+                            </ul>
+                        </>
                     )}
                     {busyId && <Loader2 className="mx-auto h-5 w-5 animate-spin text-emerald-500" />}
                 </div>

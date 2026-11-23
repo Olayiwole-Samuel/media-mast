@@ -621,7 +621,7 @@ const notifyMorningBriefing = safely('morning briefing', async (stationId, booki
     const pending = bookings.filter((b) => b.status === 'PENDING').length;
     const title = `Today at ${station.name}: ${bookings.length} spot${bookings.length === 1 ? '' : 's'} across ${campaigns} campaign${campaigns === 1 ? '' : 's'}`;
     const body = [pending ? `${pending} still waiting for you to accept.` : null, 'Open the run sheet for times, programmes and adverts. Confirm them aired with the TX log and clip.'].filter(Boolean).join(' ');
-    const link = `/station/run-sheet?date=${day}`;
+    const link = `/print/run-sheet?date=${day}`;
     await pushInApp(users, { type: 'SLOT_REMINDER', title, body, link });
     if (emails.length) {
         const sorted = [...bookings].sort((a, b) => String(a.time).localeCompare(String(b.time)));

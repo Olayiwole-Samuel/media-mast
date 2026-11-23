@@ -9,6 +9,7 @@ import { signOut } from "@/lib/auth";
 const NAV_ITEMS = [
     { label: "Overview", href: "/station", icon: LayoutDashboard },
     { label: "Booking requests", href: "/station/requests", icon: Inbox },
+    { label: "Today's run sheet", href: "/print/run-sheet", icon: CalendarDays },
     { label: "Earnings", href: "/station/earnings", icon: Coins },
     { label: "Volume discounts", href: "/station/discounts", icon: Percent },
     { label: "Schedule", href: "/station/schedule", icon: CalendarDays },

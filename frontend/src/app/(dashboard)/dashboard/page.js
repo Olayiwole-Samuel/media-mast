@@ -12,6 +12,8 @@ import { useCart } from "@/lib/cart";
 import { bookingStatus, campaignStatus, formatDate, formatMoney } from "@/lib/status";
 import { PageLoading, ApiErrorState } from "@/components/common/PageState";
 import WalletCard from "@/components/wallet/WalletCard";
+import PlanSummaryCard from "@/components/dashboard/PlanSummaryCard";
+import OnboardingChecklist from "@/components/dashboard/OnboardingChecklist";
 
 // Individual dashboard: a summary of the advertiser's own activity, all from
 // real endpoints (GET /auth/me, /bookings, /campaigns, /payments), plus the
@@ -162,7 +164,9 @@ export default function DashboardPage() {
                 </div>
             </motion.div>
 
+            <OnboardingChecklist />
             <WalletCard />
+            <PlanSummaryCard paths={{ campaigns: "/campaigns", bookings: "/bookings" }} />
 
             {/* Summary */}
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

@@ -7,7 +7,7 @@ import {
     Loader2, ShieldCheck, Search, Tv, Radio, Newspaper, Monitor, Image as BillboardIcon,
     ChevronDown, ChevronUp, CalendarDays, AlertTriangle, MapPin, Wallet as WalletIcon, Trash2, CheckCircle2, ShoppingCart, Cloud,
 } from "lucide-react";
-import { getCampaigns, getStations, getCreatives, quoteMediaPlan, getPlanDraft, savePlanDraft } from "@/lib/api";
+import { getCampaigns, getStations, getCreatives, quoteMediaPlan, getPlanDraft, savePlanDraft, getPlanSources, getPlanSource, getStationAvailability } from "@/lib/api";
 import { formatMoney } from "@/lib/status";
 import { useSession } from "@/lib/auth";
 import { advertiserPaths } from "@/lib/cart";
@@ -56,6 +56,7 @@ const lineFor = (station, rate) => {
         spotsByDay: [0, 1, 2, 3, 4, 5, 6].map((d) => (!rateDays.length || rateDays.includes(d) ? 1 : 0)),
         startDate: "",
         endDate: "",
+        offWeeks: [],
     };
 };
 
@@ -73,6 +74,20 @@ function TypeIcon({ type, className }) {
 }
 
 // One media house: its rate card as tick boxes (a tick adds a plan line).
+function StationBlocked({ stationId }) {
+    const [list, setList] = useState(null);
+    useEffect(() => {
+        let live = true;
+        getStationAvailability(stationId).then((r) => live && setList(r?.data?.blackouts || [])).catch(() => live && setList([]));
+        return () => { live = false; };
+    }, [stationId]);
+    const today = new Date().toISOString().slice(0, 10);
+    const upcoming = (list || []).filter((b) => (b.endDate || b.startDate) >= today);
+    if (!upcoming.length) return null;
+    const label = (b) => `${shortDate(b.startDate)}${b.endDate && b.endDate !== b.startDate ? `–${shortDate(b.endDate)}` : ""}${b.startTime ? ` ${b.startTime}–${b.endTime}` : ""}`;
+    return <p className="px-4 pb-2 text-xs text-amber-700 dark:text-amber-300">Not available: {upcoming.slice(0, 8).map(label).join(" · ")}{upcoming.length > 8 ? " …" : ""}</p>;
+}
+
 function StationRates({ station, lines, onToggle, open, onOpenChange, advertSeconds, renderLines }) {
     const rates = activeRates(station);
     const groups = groupRates(rates);
@@ -150,6 +165,7 @@ function StationRates({ station, lines, onToggle, open, onOpenChange, advertSeco
                         </table>
                     </div>
                     <p className="px-4 py-2 text-xs text-slate-400">Rate card prices per {station.type === "PRESS" ? "insertion" : "spot"}. Tick a slot, then set the spots for each day right below.</p>
+                    <StationBlocked stationId={station._id} />
                 </div>
             )}
             {mine.length > 0 && (
@@ -165,7 +181,23 @@ function StationRates({ station, lines, onToggle, open, onOpenChange, advertSeco
 const DAY_ORDER = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [0, "Sun"]];
 const VD_LABEL = { PENDING: "volume discount waiting for the media house to confirm", REJECTED: "volume discount not confirmed by the media house" };
 
-function PlanLine({ line, quote, error, campaignStart, campaignEnd, onChange, onRemove }) {
+const mondayOf = (d) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() - ((x.getUTCDay() + 6) % 7)); return x.toISOString().slice(0, 10); };
+const weeksBetween = (from, to) => {
+    if (!from || !to || from > to) return [];
+    const out = [];
+    for (let w = mondayOf(from); w <= to; w = new Date(new Date(`${w}T00:00:00Z`).getTime() + 7 * 864e5).toISOString().slice(0, 10)) out.push(w);
+    return out.slice(0, 80);
+};
+const shortDate = (d) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+
+function PlanLine({ line, quote, error, campaignStart, campaignEnd, onChange, onRemove, onApplyAll, canApplyAll }) {
+    const [showWeeks, setShowWeeks] = useState(false);
+    const [showSkipped, setShowSkipped] = useState(false);
+    const [tomorrow] = useState(() => new Date(Date.now() + 864e5).toISOString().slice(0, 10));
+    const lineFrom = [line.startDate || campaignStart, tomorrow].sort().pop();
+    const weeks = weeksBetween(lineFrom, line.endDate || campaignEnd);
+    const off = new Set(line.offWeeks || []);
+    const toggleWeek = (w) => onChange({ offWeeks: off.has(w) ? [...off].filter((x) => x !== w) : [...off, w] });
     const soldDays = line.rateDays?.length ? new Set(line.rateDays) : null;
     const setDay = (d, v) => {
         const next = [...line.spotsByDay];
@@ -201,6 +233,25 @@ function PlanLine({ line, quote, error, campaignStart, campaignEnd, onChange, on
                 <input type="date" value={line.endDate || ""} min={campaignStart} max={campaignEnd} onChange={(e) => onChange({ endDate: e.target.value })} className={smallInput} />
                 {(line.startDate || line.endDate) ? <button type="button" onClick={() => onChange({ startDate: "", endDate: "" })} className="text-emerald-600 hover:underline">whole campaign</button> : <span className="text-slate-400">(whole campaign)</span>}
             </div>
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+                <button type="button" onClick={() => setShowWeeks(!showWeeks)} className="font-medium text-emerald-700 hover:underline dark:text-emerald-400">
+                    {showWeeks ? "Hide weeks" : `Weeks on/off${off.size ? ` (${off.size} off)` : ""}`}
+                </button>
+                {canApplyAll && <button type="button" onClick={onApplyAll} className="font-medium text-slate-600 hover:underline dark:text-slate-300">Use these days for all lines</button>}
+            </div>
+            {showWeeks && (
+                <div className="mt-2">
+                    <p className="mb-1 text-[11px] text-slate-500">Untick weeks for bursts and quiet weeks. Week of:</p>
+                    <div className="flex flex-wrap gap-1">
+                        {weeks.map((w) => (
+                            <button key={w} type="button" onClick={() => toggleWeek(w)}
+                                className={`rounded-md px-2 py-1 text-[11px] font-medium ${off.has(w) ? "bg-slate-100 text-slate-400 line-through dark:bg-slate-800" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200"}`}>
+                                {shortDate(w)}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
             {error ? (
                 <p className="mt-2 text-xs font-medium text-red-600 dark:text-red-400">{error}</p>
             ) : quote ? (
@@ -209,7 +260,12 @@ function PlanLine({ line, quote, error, campaignStart, campaignEnd, onChange, on
                     {" · "}{formatMoney(quote.unit.gross)}{quote.unit.volumeDiscountPercent ? ` − ${quote.unit.volumeDiscountPercent}% vol.` : ""}{quote.unit.agencyCommissionPercent ? ` − ${quote.unit.agencyCommissionPercent}% agency` : ""} = <span className="font-semibold">{formatMoney(quote.unit.net)}</span> net + VAT
                     {" · "}<span className="font-semibold text-slate-900 dark:text-white">{formatMoney(quote.totals.total)}</span>
                     {VD_LABEL[quote.volumeDiscountStatus] && <span className="block text-amber-700 dark:text-amber-300">Your {VD_LABEL[quote.volumeDiscountStatus]}.</span>}
-                    {quote.skippedCount > 0 && <span className="block text-amber-700 dark:text-amber-300">{quote.skippedCount} date{quote.skippedCount === 1 ? "" : "s"} skipped (media house unavailable).</span>}
+                    {quote.skippedCount > 0 && (
+                        <span className="block text-amber-700 dark:text-amber-300">
+                            {quote.skippedCount} date{quote.skippedCount === 1 ? "" : "s"} skipped (media house unavailable). <button type="button" onClick={() => setShowSkipped(!showSkipped)} className="underline">{showSkipped ? "hide" : "which?"}</button>
+                            {showSkipped && <span className="mt-1 block">{(quote.skipped || []).map((x) => `${shortDate(x.date)}: ${x.reason.replace(/^This station /, "")}`).join(" · ")}{quote.skippedCount > (quote.skipped || []).length ? " …" : ""}</span>}
+                        </span>
+                    )}
                 </div>
             ) : null}
         </div>
@@ -289,7 +345,7 @@ export default function BookingPage() {
                 const restored = (d?.lines || []).map((l) => {
                     const st = byId.get(l.stationId);
                     const rate = st && (st.rateCard || []).find((x) => x && x._id === l.rateId);
-                    return st && rate ? { ...lineFor(st, rate), spotsByDay: l.spotsByDay, startDate: l.startDate || "", endDate: l.endDate || "" } : null;
+                    return st && rate ? { ...lineFor(st, rate), spotsByDay: l.spotsByDay, startDate: l.startDate || "", endDate: l.endDate || "", offWeeks: l.offWeeks || [] } : null;
                 }).filter(Boolean);
                 setLines(restored);
                 if (d?.creativeId) setCreativeId(d.creativeId);
@@ -309,7 +365,7 @@ export default function BookingPage() {
     const payload = useMemo(() => (campaign && lines.length ? {
         campaignId: campaign._id,
         creativeId: creativeId || undefined,
-        lines: lines.map((l) => ({ stationId: l.stationId, rateId: l.rateId, spotsByDay: l.spotsByDay, startDate: l.startDate || undefined, endDate: l.endDate || undefined })),
+        lines: lines.map((l) => ({ stationId: l.stationId, rateId: l.rateId, spotsByDay: l.spotsByDay, startDate: l.startDate || undefined, endDate: l.endDate || undefined, offWeeks: l.offWeeks || [] })),
     } : null), [campaign, lines, creativeId]);
 
     // Save every change to the cart (after the saved plan has loaded).
@@ -319,7 +375,7 @@ export default function BookingPage() {
         const t = setTimeout(() => {
             savePlanDraft(campaign._id, {
                 creativeId: creativeId || undefined,
-                lines: lines.map((l) => ({ stationId: l.stationId, rateId: l.rateId, spotsByDay: l.spotsByDay, startDate: l.startDate || undefined, endDate: l.endDate || undefined })),
+                lines: lines.map((l) => ({ stationId: l.stationId, rateId: l.rateId, spotsByDay: l.spotsByDay, startDate: l.startDate || undefined, endDate: l.endDate || undefined, offWeeks: l.offWeeks || [] })),
             }).then(() => setSaveState("saved")).catch(() => setSaveState("error"));
         }, 600);
         return () => clearTimeout(t);
@@ -359,6 +415,37 @@ export default function BookingPage() {
         setOpen(station._id, true);
     };
     const updateLine = (key, patch) => setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+    const applyPatternToAll = (from) => setLines((prev) => prev.map((l) => (l.key === from.key ? l : {
+        ...l,
+        spotsByDay: from.spotsByDay.map((n, d) => (!l.rateDays?.length || l.rateDays.includes(d) ? n : 0)),
+    })));
+
+    // Copy a plan from another campaign (its media houses, rates and days).
+    const [sources, setSources] = useState(null);
+    const [copyFrom, setCopyFrom] = useState("");
+    const [copyNote, setCopyNote] = useState("");
+    useEffect(() => {
+        if (!campaignId) return;
+        getPlanSources().then((r) => setSources((r.data || []).filter((c) => c._id !== campaignId))).catch(() => setSources([]));
+    }, [campaignId]);
+    const copyPlan = async () => {
+        if (!copyFrom) return;
+        try {
+            const r = await getPlanSource(copyFrom);
+            const byId = new Map(stations.map((st) => [st._id, st]));
+            const copied = (r.data || []).map((l) => {
+                const st = byId.get(l.stationId);
+                const rate = st && (st.rateCard || []).find((x) => x && x._id === l.rateId && x.isActive !== false);
+                return st && rate ? { ...lineFor(st, rate), spotsByDay: l.spotsByDay } : null;
+            }).filter(Boolean);
+            setLines((prev) => [...prev, ...copied.filter((c) => !prev.some((p) => p.rateId === c.rateId))]);
+            setOpenIds((prev) => new Set([...prev, ...copied.map((c) => c.stationId)]));
+            const missed = (r.data || []).length - copied.length;
+            setCopyNote(`Copied ${copied.length} line${copied.length === 1 ? "" : "s"}${missed ? `; ${missed} no longer on the rate card` : ""}.`);
+        } catch (e) {
+            setCopyNote(e?.message || "Couldn't copy that plan.");
+        }
+    };
     const removeLine = (key) => setLines((prev) => prev.filter((l) => l.key !== key));
     const setOpen = (id, open) => setOpenIds((prev) => { const next = new Set(prev); if (open) next.add(id); else next.delete(id); return next; });
 
@@ -460,7 +547,7 @@ export default function BookingPage() {
                                 <StationRates key={s._id} station={s} lines={lines} onToggle={toggle} open={openIds.has(s._id)} onOpenChange={(o) => setOpen(s._id, o)} advertSeconds={creative?.durationSeconds || null}
                                     renderLines={(mine) => mine.map((l) => {
                                         const i = lines.indexOf(l);
-                                        return <PlanLine key={l.key} line={l} quote={quote?.lines?.find((q) => q.index === i)} error={lineErrors.get(i)} campaignStart={start} campaignEnd={end} onChange={(patch) => updateLine(l.key, patch)} onRemove={() => removeLine(l.key)} />;
+                                        return <PlanLine key={l.key} line={l} quote={quote?.lines?.find((q) => q.index === i)} error={lineErrors.get(i)} campaignStart={start} campaignEnd={end} onChange={(patch) => updateLine(l.key, patch)} onRemove={() => removeLine(l.key)} onApplyAll={() => applyPatternToAll(l)} canApplyAll={lines.length > 1} />;
                                     })} />
                             ))}
                         </div>
@@ -476,6 +563,16 @@ export default function BookingPage() {
                                 {saveState === "saving" ? "Saving…" : saveState === "saved" ? <><Cloud className="h-3.5 w-3.5 text-emerald-500" /> Saved to cart</> : saveState === "error" ? <span className="text-red-600">Not saved</span> : null}
                             </span>
                         </h2>
+                        {ready && sources && sources.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                                <select value={copyFrom} onChange={(e) => setCopyFrom(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white">
+                                    <option value="">Copy a plan from another campaign…</option>
+                                    {sources.map((c) => <option key={c._id} value={c._id}>{c.name}{c.bookedSpots ? ` (${c.bookedSpots} spots booked)` : " (saved)"}</option>)}
+                                </select>
+                                <button type="button" disabled={!copyFrom} onClick={copyPlan} className="rounded-lg border border-slate-200 px-2.5 py-1.5 font-medium text-slate-700 disabled:opacity-40 dark:border-slate-700 dark:text-slate-200">Copy</button>
+                                {copyNote && <span className="w-full text-slate-500">{copyNote}</span>}
+                            </div>
+                        )}
                         {lines.length === 0 ? (
                             <p className="text-sm text-slate-500 dark:text-slate-400">Tick slots on the left and set the spots for each day right there. Everything is saved to your cart as you go.</p>
                         ) : (

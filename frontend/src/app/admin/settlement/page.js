@@ -254,7 +254,7 @@ function SettlementInner() {
     const params = useSearchParams();
     const [tab, setTab] = useState(TABS.some((t) => t.value === params.get("tab")) ? params.get("tab") : "disputes");
     return (
-        <div className="space-y-6 p-4 sm:p-6 lg:p-8">
+        <div className="min-h-screen space-y-6 bg-slate-950 p-4 text-white sm:p-6 lg:p-8">
             <div>
                 <h1 className="flex items-center gap-2 text-2xl font-bold text-white"><Scale className="h-6 w-6 text-emerald-400" /> Disputes &amp; payouts</h1>
                 <p className="mt-1 text-slate-400">Advertisers&apos; money is held until each spot airs. Media houses prove airing with a TX log and clip; advertisers can dispute within the window; media houses are paid after.</p>

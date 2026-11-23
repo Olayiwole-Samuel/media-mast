@@ -74,7 +74,7 @@ export default function AdminWalletsPage() {
     const t = state.totals || {};
 
     return (
-        <div className="space-y-6 p-4 sm:p-6 lg:p-8">
+        <div className="min-h-screen space-y-6 bg-slate-950 p-4 text-white sm:p-6 lg:p-8">
             <div>
                 <h1 className="flex items-center gap-2 text-2xl font-bold text-white"><WalletIcon className="h-6 w-6 text-emerald-400" /> Wallets</h1>
                 <p className="mt-1 text-slate-400">Advertisers fund their wallet and every booking is paid from it. Top-ups are in test mode until Paystack is connected; credit bank transfers here.</p>

@@ -8,6 +8,7 @@ import { useSession } from "@/lib/auth";
 import { getStationPortalSummary } from "@/lib/api";
 import { formatMoney, formatDate } from "@/lib/status";
 import { PageLoading, ApiErrorState } from "@/components/common/PageState";
+import OnboardingChecklist from "@/components/dashboard/OnboardingChecklist";
 
 // Station overview: what needs a response, what's coming up, and earnings
 // from paid bookings (GET /station-portal/summary).
@@ -78,6 +79,8 @@ export default function StationOverviewPage() {
                     {isAdmin ? `${(data?.stations || []).length} media houses: booking requests, schedules and earnings.` : "Booking requests, your schedule and earnings in one place."}
                 </p>
             </motion.div>
+
+            {!isAdmin && <OnboardingChecklist />}
 
             {inactive.length > 0 && (
                 <div className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">

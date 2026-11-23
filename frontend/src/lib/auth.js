@@ -39,6 +39,23 @@ export const accountKindLabel = (user, company) => {
 // access through their permissions, which the backend enforces.
 export const isCompanyOwner = (user) => user?.accountType === "COMPANY";
 
+// ── Admin "support view" (read-only), kept only in the tab that opened it ──
+const SUPPORT_TOKEN = "mm-support-token";
+const SUPPORT_USER = "mm-support-user";
+export const isSupportView = () => typeof window !== "undefined" && !!sessionStorage.getItem(SUPPORT_TOKEN);
+export const readToken = () => (typeof window === "undefined" ? null : sessionStorage.getItem(SUPPORT_TOKEN) || localStorage.getItem("token"));
+const readUserRaw = () => sessionStorage.getItem(SUPPORT_USER) || localStorage.getItem("user");
+export const startSupportSession = (token, user) => {
+    sessionStorage.setItem(SUPPORT_TOKEN, token);
+    sessionStorage.setItem(SUPPORT_USER, JSON.stringify(user));
+    window.dispatchEvent(new Event(AUTH_EVENT));
+};
+export const endSupportSession = () => {
+    sessionStorage.removeItem(SUPPORT_TOKEN);
+    sessionStorage.removeItem(SUPPORT_USER);
+    window.dispatchEvent(new Event(AUTH_EVENT));
+};
+
 export const saveSession = (token, user) => {
     localStorage.setItem("token", token);
     localStorage.setItem("user", JSON.stringify(user));
@@ -47,6 +64,8 @@ export const saveSession = (token, user) => {
 
 export const clearSession = () => {
     if (typeof window === "undefined") return;
+    // A support view ending (expired) must not sign the admin out.
+    if (isSupportView()) { endSupportSession(); return; }
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     window.dispatchEvent(new Event(AUTH_EVENT));
@@ -54,6 +73,12 @@ export const clearSession = () => {
 
 // Best-effort server logout (records the event), then clear locally.
 export const signOut = async () => {
+    if (isSupportView()) {
+        endSupportSession();
+        window.close();
+        window.location.assign("/admin/support");
+        return;
+    }
     const token = localStorage.getItem("token");
     const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -84,7 +109,7 @@ const subscribe = (callback) => {
 
 // A string snapshot keeps useSyncExternalStore stable between renders.
 const getSnapshot = () =>
-    `${localStorage.getItem("token") ? "1" : "0"}|${localStorage.getItem("user") || ""}`;
+    `${readToken() ? "1" : "0"}|${readUserRaw() || ""}`;
 
 // null on the server / during hydration = "not known yet"
 const getServerSnapshot = () => null;

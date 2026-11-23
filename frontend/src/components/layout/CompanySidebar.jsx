@@ -45,6 +45,7 @@ const NAV_ITEMS = [
     { label: "Cart", href: "/company/cart", icon: ShoppingCart },
     { label: "Wallet", href: "/company/wallet", icon: Wallet },
     { label: "Volume discounts", href: "/company/discounts", icon: Percent },
+    { label: "Invoices", href: "/company/invoices", icon: FileBarChart },
     // Transition only: shown while this company still runs a station itself
     // (stations are normally run by admin-created station managers).
     { label: "Station requests", href: "/company/station-requests", icon: Inbox, stationOperatorOnly: true },

@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import Navbar from "@/components/layout/Navbar";
+import SupportBanner from "@/components/layout/SupportBanner";
 import "./global.css";
 
 export default function RootLayout({ children }) {
@@ -22,6 +23,11 @@ export default function RootLayout({ children }) {
         "/settings",
         "/book",
         "/wallet",
+        // A client reviewing a shared plan; an admin opening a support view.
+        "/plan-review",
+        "/print",
+        "/invoices",
+        "/support-view",
         "/company",
         "/admin",
         // A business awaiting approval
@@ -37,6 +43,7 @@ export default function RootLayout({ children }) {
     return (
         <html lang="en">
             <body>
+                <SupportBanner />
                 {!hideNavbar && <Navbar />}
                 {children}
             </body>

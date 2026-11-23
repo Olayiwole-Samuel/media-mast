@@ -36,7 +36,7 @@ export default function AdminDiscountsPage() {
     const rows = state.data.filter((a) => !q || `${a.agencyName} ${a.stationName}`.toLowerCase().includes(q));
 
     return (
-        <div className="space-y-6 p-4 sm:p-6 lg:p-8">
+        <div className="min-h-screen space-y-6 bg-slate-950 p-4 text-white sm:p-6 lg:p-8">
             <div>
                 <h1 className="flex items-center gap-2 text-2xl font-bold text-white"><Percent className="h-6 w-6 text-emerald-400" /> Volume discounts</h1>
                 <p className="mt-1 text-slate-400">Agencies enter the volume discount from their existing agreement with each media house; the media house confirms it. Only confirmed discounts price their plans.</p>

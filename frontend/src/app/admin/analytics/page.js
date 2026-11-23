@@ -7,6 +7,7 @@ import { BarChart3, Wallet, Percent, Receipt, RotateCcw, Building2, Megaphone, R
 import { getAdminAnalytics } from "@/lib/api";
 import { formatMoney, bookingStatus } from "@/lib/status";
 import { PageLoading, ApiErrorState } from "@/components/common/PageState";
+import MoneyOverview from "@/components/admin/MoneyOverview";
 
 // Platform analytics from real records only: money (spot value, discounts,
 // VAT, refunds), the last six months, what sells (media type, spot length,
@@ -90,6 +91,8 @@ export default function AdminAnalyticsPage() {
                     <RefreshCw className="h-4 w-4" /> Refresh
                 </button>
             </motion.div>
+
+            <MoneyOverview />
 
             {/* Money */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
