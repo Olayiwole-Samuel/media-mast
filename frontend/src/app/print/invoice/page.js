@@ -6,7 +6,7 @@ import PrintShell from "@/components/print/PrintShell";
 import { getInvoice } from "@/lib/api";
 import { formatMoney } from "@/lib/status";
 
-// Tax invoice (a booked plan), receipt (wallet top-up) or credit note (refund).
+// Tax invoice (a booked plan), receipt (a wallet top-up) or credit note (a refund).
 const fmtDate = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
 function Invoice() {
