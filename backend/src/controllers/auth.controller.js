@@ -49,6 +49,12 @@ const registrationConflict = (res, message) =>
         message,
     });
 
+// Admin approval of new businesses (CAC / TIN check before they can use the
+// platform). Off for now: new accounts are active straight away and can
+// still fill in their verification details. ACCOUNT_APPROVAL_REQUIRED=true
+// turns the approval step back on.
+const approvalRequired = () => String(process.env.ACCOUNT_APPROVAL_REQUIRED || '').trim().toLowerCase() === 'true';
+
 const register = async (req, res) => {
     const created = { employeeId: null, userId: null, companyId: null, stationId: null, verificationId: null };
 
@@ -133,7 +139,7 @@ const register = async (req, res) => {
                 email,
                 phone: phone || null,
                 companyType: accountType === 'agency' ? 'AGENCY' : 'CLIENT',
-                status: 'PENDING',
+                status: approvalRequired() ? 'PENDING' : 'APPROVED',
             });
             created.companyId = company._id;
 
@@ -143,7 +149,7 @@ const register = async (req, res) => {
                 password,
                 name,
                 accountType: 'COMPANY',
-                status: 'PENDING',
+                status: approvalRequired() ? 'PENDING' : 'ACTIVE',
                 companyId: company._id,
             });
             created.userId = user._id;
@@ -183,12 +189,13 @@ const register = async (req, res) => {
                 password,
                 name,
                 accountType: 'STATION',
-                status: 'PENDING',
+                status: approvalRequired() ? 'PENDING' : 'ACTIVE',
                 companyId: null,
             });
             created.userId = user._id;
 
-            // Hidden from advertisers until an admin approves the verification.
+            // With approval on: hidden from advertisers until an admin approves.
+            // With it off: live at once (bookable once it publishes its rate card).
             const station = await Station.create({
                 name: companyName,
                 slug: stationSlug,
@@ -196,8 +203,8 @@ const register = async (req, res) => {
                 email,
                 phone: phone || null,
                 location: { city: city || null, state: state || null, country: 'Nigeria' },
-                approvalStatus: 'PENDING',
-                isActive: false,
+                approvalStatus: approvalRequired() ? 'PENDING' : 'APPROVED',
+                isActive: !approvalRequired(),
                 managerIds: [user._id],
             });
             created.stationId = station._id;
@@ -259,7 +266,7 @@ const register = async (req, res) => {
         // ── Response ──
         res.status(201).json({
             success: true,
-            message: accountType === 'individual'
+            message: accountType === 'individual' || !approvalRequired()
                 ? 'Account created successfully'
                 : 'Account created. Submit your verification details for approval.',
             data: {

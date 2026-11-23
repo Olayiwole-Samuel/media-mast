@@ -150,6 +150,8 @@ for (const [c, M] of Object.entries(C)) {
 }
 for (const [c, M] of Object.entries(C)) {
     M.insertMany = async (arr) => { const outs = []; for (const d of arr) outs.push(await M.create(d)); return outs; };
+    M.exists = async (f) => (db[c].some((d) => matches(d, f)) ? { _id: true } : null);
+    M.findByIdAndDelete = async (id) => { const o = db[c].find((d) => eq(d._id, id)); db[c] = db[c].filter((d) => !eq(d._id, id)); return o || null; };
     M.deleteMany = async (f) => { const n = db[c].length; db[c] = db[c].filter((d) => !matches(d, f)); return { deletedCount: n - db[c].length }; };
 }
 // Document save (e.g. updateCampaign): real validation, replace the stored copy.
@@ -514,6 +516,25 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
     const rates = fm1.rateCard.map((x) => ({ name: x.name, kind: x.kind, startTime: x.startTime, endTime: x.endTime, spotSeconds: x.spotSeconds, days: x.days, price: x.price + 1000, isActive: true }));
     r = await call(U.station, 'PUT', `/api/v1/station-portal/stations/${S.fm1._id}/rate-card`, { rates });
     check('M4  A rate card change tells agencies with plans on it (booked prices stay)', r.code === 200 && db.notifications.some((n) => eq(n.userId, U.ownerA) && /updated its rate card/.test(n.title)) && bk(future[2]._id).pricing.gross === 642000, `${r.code} ${r.body.message}`);
+
+    // ── N: new accounts need no admin approval (for now) ──
+    process.env.ACCOUNT_APPROVAL_REQUIRED = 'false';
+    const { registerLimiter } = src('middleware/rateLimit');
+    registerLimiter?.reset?.();
+    r = await call(null, 'POST', '/api/v1/auth/register', { accountType: 'agency', companyName: 'Fresh Agency Ltd', name: 'Ngozi', email: 'ngozi@fresh.example.com', password: 'Media-Pass-2026!' });
+    const fresh = db.users.find((u) => u.email === 'ngozi@fresh.example.com');
+    const freshCo = db.companies.find((c) => eq(c._id, fresh?.companyId));
+    check('N1  A new agency is active straight away (no admin approval)', r.code === 201 && fresh?.status === 'ACTIVE' && freshCo?.status === 'APPROVED' && freshCo.companyType === 'AGENCY', `${r.code} ${r.body.message}`);
+    r = await call(fresh?._id, 'GET', '/api/v1/campaigns');
+    check('N2  …and can use the app at once (no "verification required")', r.code === 200, `${r.code} ${r.body.code}`);
+    registerLimiter?.reset?.();
+    r = await call(null, 'POST', '/api/v1/auth/register', { accountType: 'media_house', companyName: 'Fresh FM', name: 'Tayo', email: 'tayo@freshfm.example.com', password: 'Media-Pass-2026!', mediaType: 'radio', state: 'Lagos', city: 'Ikeja' });
+    const freshSt = db.stations.find((x) => x.name === 'Fresh FM');
+    check('N3  A new media house is active and live (bookable once it adds its rate card)', r.code === 201 && db.users.find((u) => u.email === 'tayo@freshfm.example.com')?.status === 'ACTIVE' && freshSt?.approvalStatus === 'APPROVED' && freshSt.isActive === true, `${r.code} ${r.body.message}`);
+    process.env.ACCOUNT_APPROVAL_REQUIRED = 'true';
+    registerLimiter?.reset?.();
+    r = await call(null, 'POST', '/api/v1/auth/register', { accountType: 'client', companyName: 'Later Brand', name: 'Ife', email: 'ife@later.example.com', password: 'Media-Pass-2026!' });
+    check('N4  ACCOUNT_APPROVAL_REQUIRED=true brings the approval step back (PENDING)', r.code === 201 && db.users.find((u) => u.email === 'ife@later.example.com')?.status === 'PENDING', `${r.code}`);
 
     server.close();
     const passed = results.filter(Boolean).length;
