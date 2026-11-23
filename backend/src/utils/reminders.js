@@ -72,4 +72,30 @@ const runSettlementJob = async (now = new Date()) => {
     return result;
 };
 
-module.exports = { runReminders, runSettlementJob, REMINDER_STATUSES };
+// Morning briefing: from 07:00 Lagos time, each media house with spots today
+// gets one message ("Today: 12 spots across 3 campaigns") and a run sheet link.
+const runBriefings = async (now = new Date()) => {
+    const lagos = new Date(now.getTime() + 3600000);
+    if (lagos.getUTCHours() < 7) return { sent: 0 };
+    const today = lagos.toISOString().slice(0, 10);
+    const dayStartUtc = new Date(`${today}T00:00:00.000Z`);
+    const bookings = await Booking.find({ date: dayStartUtc, status: { $in: ['PENDING', 'ACCEPTED', 'SCHEDULED'] } });
+    const byStation = new Map();
+    for (const b of bookings) {
+        const k = String(b.stationId);
+        if (!byStation.has(k)) byStation.set(k, []);
+        byStation.get(k).push(b);
+    }
+    const Station = require('../models/Station');
+    const { notifyMorningBriefing } = require('./notifications');
+    let sent = 0;
+    for (const [stationId, list] of byStation) {
+        const claimed = await Station.updateOne({ _id: stationId, briefingSentOn: { $ne: today } }, { $set: { briefingSentOn: today } });
+        if (!claimed.modifiedCount) continue;
+        await notifyMorningBriefing(stationId, list, today);
+        sent += 1;
+    }
+    return { sent };
+};
+
+module.exports = { runReminders, runSettlementJob, runBriefings, REMINDER_STATUSES };

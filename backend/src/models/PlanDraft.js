@@ -9,6 +9,8 @@ const PlanDraftSchema = new mongoose.Schema(
         userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
         campaignId: { type: mongoose.Schema.Types.ObjectId, ref: 'Campaign', required: true },
         creativeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Creative', default: null },
+        // When the plan itself last changed (a client approval before this is out of date).
+        changedAt: { type: Date, default: Date.now },
         lines: {
             type: [{
                 _id: false,
@@ -18,6 +20,8 @@ const PlanDraftSchema = new mongoose.Schema(
                 spotsByDay: { type: [Number], default: [0, 0, 0, 0, 0, 0, 0] },
                 startDate: { type: String, default: null }, // YYYY-MM-DD, inside the campaign
                 endDate: { type: String, default: null },
+                // Weeks switched off (Monday YYYY-MM-DD), for bursts and quiet weeks.
+                offWeeks: { type: [String], default: [] },
             }],
             default: [],
         },

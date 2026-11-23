@@ -365,6 +365,12 @@ router.patch('/settlement-settings', settlementAdmin.updateSettings);
 
 // Volume discounts: agencies' agreements with media houses (read-only overview).
 router.get('/volume-agreements', require('../../controllers/volumeAgreement.controller').getAdminAgreements);
+
+// Money and operations overview; read-only support view of an account.
+const opsAdmin = require('../../controllers/operations.controller');
+router.get('/money-overview', opsAdmin.getMoneyOverview);
+router.get('/support-accounts', opsAdmin.listSupportAccounts);
+router.post('/support-view', opsAdmin.startSupportView);
 router.post('/subscriptions', assignSubscription);
 router.get('/plans', getAdminPlans);
 router.put('/plans/:code', updatePlan);

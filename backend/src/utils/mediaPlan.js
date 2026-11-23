@@ -91,6 +91,14 @@ const lineDates = ({ from, to, days, rateDays, today }) => {
     return out;
 };
 
+// The Monday that starts a date's week (YYYY-MM-DD): weeks can be switched
+// off for bursts and quiet weeks (flighting).
+const weekOf = (dateOnly) => {
+    const d = new Date(`${dateOnly}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+    return d.toISOString().slice(0, 10);
+};
+
 const minutesOf = (hhmm) => { const [h, m] = String(hhmm || '00:00').split(':').map(Number); return h * 60 + m; };
 
 /**
@@ -144,7 +152,9 @@ const buildPlan = ({ campaign, rawLines, stations, isAgency, rateFields, agreeme
         slotLengths.set(key, length);
 
         const fields = rateFields(station, rate);
-        const candidates = lineDates({ from, to, days, rateDays: rate.days, today });
+        // Weeks switched off for this line (bursts and quiet weeks).
+        const offWeeks = new Set((Array.isArray(raw.offWeeks) ? raw.offWeeks : []).filter((w) => isDateOnly(w)));
+        const candidates = lineDates({ from, to, days, rateDays: rate.days, today }).filter((d) => !offWeeks.has(weekOf(d)));
         const dates = [];
         const skipped = [];
         for (const d of candidates) {
@@ -167,6 +177,7 @@ const buildPlan = ({ campaign, rawLines, stations, isAgency, rateFields, agreeme
             days,
             spotsByDay,
             spotsOn,
+            offWeeks: [...offWeeks].sort(),
             // The agency's volume discount with this media house: APPROVED (used),
             // PENDING (waiting for the media house), REJECTED, or none.
             volumeDiscountStatus: agreement ? agreement.status : null,
@@ -216,6 +227,7 @@ module.exports = {
     programmeKey,
     volumeDiscountFor,
     readSpotsByDay,
+    weekOf,
     priceSpot,
     lineDates,
     buildPlan,

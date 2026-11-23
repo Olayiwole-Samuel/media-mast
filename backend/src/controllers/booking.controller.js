@@ -888,6 +888,30 @@ const applyBookingTransition = async (req, res, {
     });
 };
 
+// The same rules as applyBookingTransition, for one booking among many
+// (bulk actions): returns { ok, booking } or { ok: false, reason }.
+const transitionOne = async (req, booking, { actor, toStatus, set = {}, auditAction, auditCompanyId }) => {
+    const fromStatus = booking.status;
+    if (fromStatus === toStatus || !canTransitionBookingStatus(actor, fromStatus, toStatus)) {
+        return { ok: false, reason: `Cannot change ${booking.bookingReference} from ${fromStatus} to ${toStatus}` };
+    }
+    const refund = INVENTORY_RELEASING_STATUSES.includes(toStatus) && actor === 'STATION'
+        ? await stationRefundFields(booking, set.stationNote || 'Declined by the station')
+        : { filter: {}, set: {} };
+    const updated = await Booking.findOneAndUpdate(
+        { _id: booking._id, status: fromStatus, ...refund.filter },
+        { $set: { status: toStatus, ...set, ...refund.set } },
+        { returnDocument: 'after', runValidators: true }
+    );
+    if (!updated) return { ok: false, reason: `${booking.bookingReference} changed; reload and try again` };
+    await writeAuditLog({
+        userId: req.user.id, companyId: auditCompanyId, action: auditAction, entityId: updated._id,
+        metadata: { bookingReference: updated.bookingReference, oldStatus: fromStatus, newStatus: toStatus, actor, bulk: true },
+    });
+    if (refund.set.paymentStatus) await recordBookingRefund(req, updated, `${actor === 'STATION' ? 'Station' : 'Customer'} ${toStatus.toLowerCase()} the booking`);
+    return { ok: true, booking: updated };
+};
+
 // ── Station side ──
 // The caller must operate the booked station: its STATION account
 // manager (Station.managerIds), a full admin, or during the transition its media company
@@ -1329,7 +1353,7 @@ const publicQuote = (quote) => ({
 
 // Cancel one booking as its advertiser, applying the policy quote.
 // Returns { status, body } so it serves both endpoints and campaign cancel.
-const cancelBookingAsCustomer = async (req, booking, { now = new Date(), quote: givenQuote } = {}) => {
+const cancelBookingAsCustomer = async (req, booking, { now = new Date(), quote: givenQuote, quiet = false } = {}) => {
     if (!CUSTOMER_CANCELLABLE.includes(booking.status)) {
         return { status: 403, body: { success: false, message: `Cannot cancel booking with status: ${booking.status}` } };
     }
@@ -1378,7 +1402,8 @@ const cancelBookingAsCustomer = async (req, booking, { now = new Date(), quote: 
     });
 
     await recordBookingRefund(req, cancelled, quote.explanation);
-    await notifyCustomerCancellation(cancelled);
+    // Bulk actions send one summary instead of a message per spot.
+    if (!quiet) await notifyCustomerCancellation(cancelled);
 
     return {
         status: 200,
@@ -1608,5 +1633,9 @@ module.exports = {
         cancelCampaignBookings,
         releaseBookingForStation,
         publicQuote,
+        transitionOne,
+        cancelBookingAsCustomer,
+        readProposedDate,
+        spotHasAired,
     },
 };

@@ -32,6 +32,7 @@ const plans = require('../../controllers/mediaPlan.controller');
 router.patch('/orders/:paymentId/accept', requireStationOperator('BOOKING_APPROVE'), plans.acceptOrder);
 router.patch('/stations/:id/aired-day', requireStationOperator('BOOKING_APPROVE'), plans.markDayAired);
 router.patch('/schedule-all', requireStationOperator('BOOKING_APPROVE'), plans.scheduleAll);
+router.patch('/bulk', requireStationOperator('BOOKING_APPROVE'), require('../../controllers/operations.controller').bulkStation);
 
 // Agencies' volume discounts with this media house: confirm or reject.
 const agreements = require('../../controllers/volumeAgreement.controller');

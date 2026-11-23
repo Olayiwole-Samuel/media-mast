@@ -19,4 +19,11 @@ router.put('/drafts/:campaignId', requirePermission('BOOKING_CREATE'), plans.sav
 router.delete('/drafts/:campaignId', requirePermission('BOOKING_CREATE'), plans.deleteDraft);
 router.post('/drafts/:campaignId/checkout', requirePermission('BOOKING_CREATE'), plans.checkoutDraft);
 
+const ops = require('../../controllers/operations.controller');
+router.get('/summary', requirePermission('BOOKING_VIEW'), ops.getPlanSummary);
+router.get('/drafts/:campaignId/export', requirePermission('BOOKING_VIEW'), ops.exportDraftPlan);
+router.post('/drafts/:campaignId/share', requirePermission('BOOKING_CREATE'), ops.shareDraft);
+router.get('/sources', requirePermission('BOOKING_VIEW'), ops.listPlanSources);
+router.get('/sources/:campaignId', requirePermission('BOOKING_VIEW'), ops.getPlanSource);
+
 module.exports = router;

@@ -94,6 +94,14 @@ const authenticate = ({ allowPending = false } = {}) => async (req, res, next) =
             });
         }
 
+        // Admin "support view": a short-lived token that can only read.
+        if (decoded.readOnly) {
+            if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+                return res.status(403).json({ success: false, code: 'READ_ONLY', message: 'Support view is read-only.' });
+            }
+            req.supportView = { by: decoded.supportBy || null };
+        }
+
         // Team logins are switched off: staff accounts can't use the app.
         if (user.accountType === 'EMPLOYEE' && !teamAccountsEnabled()) {
             return res.status(403).json(TEAM_DISABLED);

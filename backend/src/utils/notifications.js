@@ -553,15 +553,98 @@ const notifyPlanStatus = safely('plan status', async (bookings, { kind, note, da
         if (!user) continue;
         const name = station ? station.name : 'The media house';
         const n = `${list.length} spot${list.length === 1 ? '' : 's'}`;
-        const title = kind === 'ACCEPTED' ? `${name} accepted ${n}` : kind === 'SCHEDULED' ? `${name} scheduled ${n}` : `${name}: ${n} aired${date ? ` on ${fmtDay(date)}` : ''}`;
-        const body = kind === 'AIRED'
-            ? airedWindowLine(list[0])
-            : [note ? `Note: ${note}` : null, 'Your money stays on hold and is paid as each spot airs.'].filter(Boolean).join(' ');
+        const title = kind === 'ACCEPTED' ? `${name} accepted ${n}`
+            : kind === 'SCHEDULED' ? `${name} scheduled ${n}`
+                : kind === 'DECLINED' ? `${name} declined ${n}`
+                    : kind === 'RESCHEDULE' ? `${name} asks to reschedule ${n}`
+                        : `${name}: ${n} aired${date ? ` on ${fmtDay(date)}` : ''}`;
+        const body = kind === 'AIRED' ? airedWindowLine(list[0])
+            : kind === 'DECLINED' ? [note ? `Reason: ${note}` : null, 'Their cost is back in your wallet.'].filter(Boolean).join(' ')
+                : kind === 'RESCHEDULE' ? [note ? `Reason: ${note}` : null, date ? `They suggest ${fmtDay(date)}.` : null, 'Pick new dates on your bookings page, or cancel them for a refund.'].filter(Boolean).join(' ')
+                    : [note ? `Note: ${note}` : null, 'Your money stays on hold and is paid as each spot airs.'].filter(Boolean).join(' ');
         await pushInApp([user], { type: 'BOOKING_STATUS', title, body, link: bookingsPath(user) });
-        if (kind === 'AIRED') {
+        if (['AIRED', 'DECLINED', 'RESCHEDULE'].includes(kind)) {
             const { text, html } = renderEmail({ heading: title, paragraphs: [body], action: { label: 'Check the proof', url: appUrl(bookingsPath(user)) } });
             await sendEmail({ to: user.email, subject: title, text, html });
         }
+    }
+    return true;
+});
+
+// An agency cancelled or moved many spots at once: one message per media house.
+const notifyBulkToStations = safely('bulk to stations', async (bookings, { kind, date }) => {
+    const byStation = new Map();
+    for (const b of bookings || []) {
+        const k = String(idOf(b.stationId));
+        if (!byStation.has(k)) byStation.set(k, []);
+        byStation.get(k).push(b);
+    }
+    for (const [stationId, list] of byStation) {
+        const { users, emails } = await stationContacts(stationId);
+        const name = await campaignName(list[0]);
+        const n = `${list.length} spot${list.length === 1 ? '' : 's'}`;
+        const title = kind === 'MOVED' ? `${n} moved to ${fmtDay(date)}` : `${n} cancelled`;
+        const body = kind === 'MOVED' ? `"${name}": the advertiser moved them. Please confirm the new date on your desk.` : `"${name}": the advertiser cancelled them; they are no longer on your schedule.`;
+        await pushInApp(users, { type: 'BOOKING_STATUS', title, body, link: '/station/requests' });
+        if (emails.length) {
+            const { text, html } = renderEmail({ heading: title, paragraphs: [body, ...list.slice(0, 30).map((b) => `${b.bookingReference} · ${spotWhen(b)}`)], action: { label: 'Open your desk', url: appUrl('/station/requests') } });
+            await sendEmail({ to: emails, subject: title, text, html });
+        }
+    }
+    return true;
+});
+
+// The client answered the plan review link.
+const notifyPlanShareResponse = safely('plan share response', async (share, draft) => {
+    const owners = share.companyId
+        ? await User.find({ companyId: share.companyId, accountType: 'COMPANY', status: 'ACTIVE' }).select('_id email accountType')
+        : await User.find({ _id: share.userId }).select('_id email accountType');
+    const name = await campaignName({ campaignId: draft.campaignId });
+    const ok = share.decision === 'APPROVED';
+    const title = ok ? `${share.responderName} approved the plan for "${name}"` : `${share.responderName} asked for changes to "${name}"`;
+    const body = ok ? 'You can book it from your cart.' : `"${share.comment}"`;
+    const link = owners[0]?.accountType === 'INDIVIDUAL' ? '/cart' : '/company/cart';
+    await pushInApp(owners, { type: 'BOOKING_STATUS', title, body, link });
+    const emails = owners.map((o) => o.email).filter(Boolean);
+    if (emails.length) {
+        const { text, html } = renderEmail({ heading: title, paragraphs: [body], action: { label: 'Open your cart', url: appUrl(link) } });
+        await sendEmail({ to: emails, subject: title, text, html });
+    }
+    return true;
+});
+
+// Morning briefing for one media house.
+const notifyMorningBriefing = safely('morning briefing', async (stationId, bookings, day) => {
+    const { station, users, emails } = await stationContacts(stationId);
+    if (!station) return false;
+    const campaigns = new Set(bookings.map((b) => String(b.campaignId))).size;
+    const pending = bookings.filter((b) => b.status === 'PENDING').length;
+    const title = `Today at ${station.name}: ${bookings.length} spot${bookings.length === 1 ? '' : 's'} across ${campaigns} campaign${campaigns === 1 ? '' : 's'}`;
+    const body = [pending ? `${pending} still waiting for you to accept.` : null, 'Open the run sheet for times, programmes and adverts. Confirm them aired with the TX log and clip.'].filter(Boolean).join(' ');
+    const link = `/station/run-sheet?date=${day}`;
+    await pushInApp(users, { type: 'SLOT_REMINDER', title, body, link });
+    if (emails.length) {
+        const sorted = [...bookings].sort((a, b) => String(a.time).localeCompare(String(b.time)));
+        const { text, html } = renderEmail({ heading: title, paragraphs: [body, ...sorted.slice(0, 40).map((b) => `${b.time} · ${b.rateName || b.slot}${b.spotSeconds ? ` · ${b.spotSeconds}s` : ''} · ${b.bookingReference}`)], action: { label: 'Open the run sheet', url: appUrl(link) } });
+        await sendEmail({ to: emails, subject: title, text, html });
+    }
+    return true;
+});
+
+// A media house changed its rate card: tell agencies with plans on it.
+const notifyRateCardChanged = safely('rate card changed', async (station) => {
+    const Booking = require('../models/Booking');
+    const PlanDraft = require('../models/PlanDraft');
+    const today = new Date(new Date().toISOString().slice(0, 10));
+    const [booked, drafts] = await Promise.all([
+        Booking.find({ stationId: station._id, date: { $gte: today }, status: { $in: ['PENDING', 'ACCEPTED', 'SCHEDULED'] } }).select('userId companyId'),
+        PlanDraft.find({ 'lines.stationId': station._id }).select('userId companyId'),
+    ]);
+    const owners = new Map();
+    for (const r of [...booked, ...drafts]) owners.set(String(r.companyId || r.userId), r);
+    for (const r of owners.values()) {
+        const users = r.companyId ? await User.find({ companyId: r.companyId, accountType: 'COMPANY', status: 'ACTIVE' }).select('_id accountType') : await User.find({ _id: r.userId }).select('_id accountType');
+        await pushInApp(users, { type: 'NEW_STATION', title: `${station.name} updated its rate card`, body: 'Spots you have already booked keep their price. Plans in your cart now use the new rates.', link: users[0]?.accountType === 'INDIVIDUAL' ? '/cart' : '/company/cart' });
     }
     return true;
 });
@@ -641,6 +724,10 @@ module.exports = {
     notifyPlanStatus,
     notifyAgreementRequested,
     notifyAgreementDecided,
+    notifyBulkToStations,
+    notifyPlanShareResponse,
+    notifyMorningBriefing,
+    notifyRateCardChanged,
     notifyVerificationSubmitted,
     notifyVerificationDecision,
     notifyCheckout,

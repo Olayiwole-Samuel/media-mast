@@ -120,7 +120,7 @@ const applyUpdate = (o, u) => {
         o[k] = (o[k] || 0) + n;
     }
 };
-const C = { users: User, employees: Employee, companies: Company, campaigns: Campaign, stations: Station, bookings: Booking, payments: Payment, creatives: Creative, plans: Plan, subscriptions: Subscription, notifications: Notification, verifications: Verification, wallets: Wallet, walletTransactions: WalletTransaction, platformSettings: PlatformSetting, payoutRequests: PayoutRequest, volumeAgreements: src('models/VolumeAgreement'), planDrafts: src('models/PlanDraft') };
+const C = { users: User, employees: Employee, companies: Company, campaigns: Campaign, stations: Station, bookings: Booking, payments: Payment, creatives: Creative, plans: Plan, subscriptions: Subscription, notifications: Notification, verifications: Verification, wallets: Wallet, walletTransactions: WalletTransaction, platformSettings: PlatformSetting, payoutRequests: PayoutRequest, volumeAgreements: src('models/VolumeAgreement'), planDrafts: src('models/PlanDraft'), planShares: src('models/PlanShare') };
 for (const [c, M] of Object.entries(C)) {
     M.find = (f) => q(M, () => db[c].filter((d) => matches(d, f)));
     M.findOne = (f) => q(M, () => db[c].find((d) => matches(d, f)) || null);
@@ -225,7 +225,7 @@ const seed = () => {
             st('s3'), st('s4'), st('s5'), st('press', { type: 'PRESS' })],
         campaigns: [cp('ivy'), cp('ivyClosed', { status: 'CANCELLED' }), cp('ivyRanged', { startDate: new Date(`${day(5)}T00:00:00Z`), endDate: new Date(`${day(8)}T00:00:00Z`) }),
             cp('ian', { userId: U.indiv2 }), cp('companyA', { companyId: A, userId: U.ownerA, status: 'SUBMITTED' })],
-        bookings: [], payments: [], creatives: [], audit: [], plans: [], subscriptions: [], notifications: [], verifications: [], wallets: [], walletTransactions: [], platformSettings: [], payoutRequests: [], volumeAgreements: [], planDrafts: [],
+        bookings: [], payments: [], creatives: [], audit: [], plans: [], subscriptions: [], notifications: [], verifications: [], wallets: [], walletTransactions: [], platformSettings: [], payoutRequests: [], volumeAgreements: [], planDrafts: [], planShares: [],
     };
 };
 AuditLog.create = async (data) => { const a = new AuditLog(data); await a.validate(); db.audit.push(a.toObject()); return a; };
@@ -268,6 +268,7 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
     const walletOf = (scope) => db.wallets.find((w) => (scope.stationId ? eq(w.stationId, scope.stationId) : scope.companyId ? eq(w.companyId, scope.companyId) : (w.companyId == null && w.stationId == null && eq(w.userId, scope.userId))));
     const day = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
     const r2 = (n) => Math.round(n * 100) / 100;
+    const dateOnly = (d) => new Date(d).toISOString().slice(0, 10);
 
     // Agency A (a media agency) runs a 6-month campaign; Ivy is an individual brand.
     db.companies.find((c) => eq(c._id, A)).companyType = 'AGENCY';
@@ -412,6 +413,107 @@ const counts = () => `${db.payments.length}/${db.bookings.length}`;
     check('T2  Tracker totals add up: held + spent + refunded = what was booked', r2(r.body.data.totals.held + r.body.data.totals.spent + r.body.data.totals.refunded) === r2(r.body.data.totals.booked) && r2(r.body.data.totals.booked) === r2(planTotal), JSON.stringify(r.body.data?.totals));
     r = await call(U.indiv, 'GET', `/api/v1/campaigns/${CP.companyA._id}/tracker`);
     check("T3  Another advertiser can't see the tracker → 404", r.code === 404, `${r.code}`);
+
+    // ── F: weeks switched off (bursts and quiet weeks) ──
+    const { weekOf } = src('utils/mediaPlan');
+    const firstThu = (() => { for (let i = 1; i < 9; i += 1) if (new Date(`${day(i)}T00:00:00Z`).getUTCDay() === 4) return day(i); return null; })();
+    r = await call(U.ownerA, 'POST', '/api/v1/media-plans/quote', planOf('companyA', [{ ...newsLine, offWeeks: [weekOf(firstThu)] }], adA._id));
+    check('F1  Switching one week off drops that week\'s spots', r.code === 200 && r.body.data.lines[0].spots === thursdays - 1 && r.body.data.lines[0].offWeeks.length === 1, `${r.code} ${r.body.data?.lines?.[0]?.spots}`);
+
+    // ── S: summary, export, report, invoices ──
+    r = await call(U.ownerA, 'GET', '/api/v1/media-plans/summary');
+    check('S1  Dashboard summary: live campaigns, next 7 days, money on hold', r.code === 200 && r.body.data.liveCampaigns === 1 && typeof r.body.data.next7 === 'number' && r.body.data.held > 0, JSON.stringify(r.body.data));
+    r = await call(U.ownerA, 'GET', `/api/v1/campaigns/${CP.companyA._id}/plan.xlsx`);
+    check('S2  The booked plan downloads as an Excel file', r.code === 200 && /spreadsheetml/.test(r.headers.get('content-type') || '') && r.text.startsWith('PK'), `${r.code} ${r.headers.get('content-type')}`);
+    r = await call(U.indiv, 'GET', `/api/v1/campaigns/${CP.companyA._id}/plan.xlsx`);
+    check("S3  …not someone else's campaign → 404", r.code === 404, `${r.code}`);
+    r = await call(U.ownerA, 'GET', `/api/v1/campaigns/${CP.companyA._id}/report`);
+    const repNews = (r.body.data?.stations || []).find((x) => x.station === fm1.name);
+    check('S4  Proof-of-airing report: per media house planned/aired, aired spots with their proof', r.code === 200 && repNews?.aired === 1 && r.body.data.spots.some((x) => x.hasLog && x.hasClip), `${r.code}`);
+    r = await call(U.ownerA, 'GET', '/api/v1/invoices');
+    const inv = (r.body.data || []).find((d) => d.kind === 'invoice');
+    check('S5  Invoices list: the plan invoice, wallet receipts and credit notes', r.code === 200 && !!inv && r.body.data.some((d) => d.kind === 'receipt') && r.body.data.some((d) => d.kind === 'credit'), `${r.code}`);
+    r = await call(U.ownerA, 'GET', `/api/v1/invoices/invoice/${inv?.id}`);
+    check('S6  The tax invoice: lines per media house and programme, VAT and the total paid', r.code === 200 && r.body.data.totals.total === planTotal && r.body.data.items.length === 2 && r.body.data.items.some((i) => i.qty === thursdays), `${r.code} ${JSON.stringify(r.body.data?.totals)}`);
+
+    // ── B: bulk actions ──
+    const future = news.slice(1).map((b) => bk(b._id)).filter((b) => b.status === 'SCHEDULED');
+    r = await call(U.station, 'PATCH', '/api/v1/station-portal/bulk', { action: 'RESCHEDULE', bookingIds: future.slice(0, 2).map((b) => String(b._id)) });
+    check('B1  Media house bulk action needs a reason → 400', r.code === 400, `${r.code}`);
+    r = await call(U.station, 'PATCH', '/api/v1/station-portal/bulk', { action: 'RESCHEDULE', bookingIds: future.slice(0, 2).map((b) => String(b._id)), note: 'Network news moved for elections', proposedDate: day(40) });
+    check('B2  Media house asks to reschedule 2 booked spots at once; the agency gets one message', r.code === 200 && r.body.data.done === 2 && future.slice(0, 2).every((b) => bk(b._id).status === 'CHANGES_REQUESTED') && db.notifications.filter((n) => eq(n.userId, U.ownerA) && /reschedule 2/.test(n.title)).length === 1, `${r.code} ${r.body.message}`);
+    const newThu = (() => { for (let i = 41; i < 50; i += 1) if (new Date(`${day(i)}T00:00:00Z`).getUTCDay() === 4) return day(i); return null; })();
+    const newMon = (() => { for (let i = 41; i < 50; i += 1) if (new Date(`${day(i)}T00:00:00Z`).getUTCDay() === 1) return day(i); return null; })();
+    r = await call(U.ownerA, 'POST', `/api/v1/campaigns/${CP.companyA._id}/bulk`, { action: 'MOVE', bookingIds: future.slice(0, 2).map((b) => String(b._id)), toDate: newMon });
+    check('B3  Moving Thursday-only spots to a Monday → skipped with the reason', r.code === 200 && r.body.data.moved === 0 && r.body.data.skipped.length === 2 && /isn't sold/.test(r.body.data.skipped[0].reason), JSON.stringify(r.body.data));
+    r = await call(U.ownerA, 'POST', `/api/v1/campaigns/${CP.companyA._id}/bulk`, { action: 'MOVE', bookingIds: future.slice(0, 2).map((b) => String(b._id)), toDate: newThu });
+    check('B4  Agency moves both to the new Thursday → back to the media house to confirm; one message to it', r.code === 200 && r.body.data.moved === 2 && future.slice(0, 2).every((b) => bk(b._id).status === 'PENDING' && dateOnly(bk(b._id).date) === newThu) && db.notifications.some((n) => eq(n.userId, U.station) && /moved to/.test(n.title)), `${r.code} ${r.body.message}`);
+    const from = day(120);
+    const late = news.map((b) => bk(b._id)).filter((b) => dateOnly(b.date) >= from && ['PENDING', 'ACCEPTED', 'SCHEDULED'].includes(b.status));
+    const availB = walletOf({ companyId: A }).balance;
+    r = await call(U.ownerA, 'POST', `/api/v1/campaigns/${CP.companyA._id}/bulk`, { action: 'CANCEL', stationId: String(S.fm1._id), fromDate: from });
+    check(`B5  Agency cancels the TV spots from ${from} on (${late.length}); refunds back to the wallet; media house told once`, r.code === 200 && r.body.data.cancelled === late.length && late.every((b) => bk(b._id).status === 'CANCELLED') && r2(walletOf({ companyId: A }).balance - availB) === r2(r.body.data.refunded) && r.body.data.refunded > 0 && db.notifications.filter((n) => eq(n.userId, U.station) && /cancelled/.test(n.title)).length === 1, `${r.code} ${r.body.message}`);
+    const pend = planBookings.filter((b) => eq(b.stationId, S.fm2._id)).map((b) => bk(b._id)).filter((b) => b.status === 'PENDING').slice(0, 3);
+    const availC = walletOf({ companyId: A }).balance;
+    r = await call(U.admin, 'PATCH', '/api/v1/station-portal/bulk', { action: 'DECLINE', bookingIds: pend.map((b) => String(b._id)), note: 'Belt sold out' });
+    check('B6  Media house declines 3 spots at once → each refunded at its plan price', r.code === 200 && r.body.data.done === 3 && pend.every((b) => bk(b._id).status === 'REJECTED') && r2(walletOf({ companyId: A }).balance - availC) === r2(38834.38 * 3), `${r.code} ${r.body.message}`);
+    r = await call(U.indiv2, 'PATCH', '/api/v1/station-portal/bulk', { action: 'DECLINE', bookingIds: [String(future[2]._id)], note: 'x' });
+    check("B7  Someone else can't act on a media house's spots", r.code === 403 || (r.code === 200 && r.body.data.done === 0), `${r.code}`);
+
+    // ── A: client approval link ──
+    r = await call(U.ownerA, 'PUT', `/api/v1/media-plans/drafts/${CP.companyA._id}`, { lines: [{ ...newsLine, startDate: day(140), endDate: day(170) }], creativeId: String(adA._id) });
+    r = await call(U.ownerA, 'POST', `/api/v1/media-plans/drafts/${CP.companyA._id}/share`, {});
+    const token = r.body.data?.token;
+    check('A1  Agency creates a review link for its client', r.code === 200 && typeof token === 'string' && token.length >= 30 && r.body.data.status.decision === 'WAITING', `${r.code}`);
+    r = await call(null, 'GET', `/api/v1/public/plan-shares/${token}`);
+    check('A2  The client opens it without an account: the plan, prices and total', r.code === 200 && r.body.data.agency === 'Advertiser Co' && r.body.data.lines.length === 1 && r.body.data.totals.total > 0, `${r.code} ${r.body.message}`);
+    r = await call(null, 'GET', '/api/v1/public/plan-shares/not-a-real-token-at-all-xxxxxxxxx');
+    check('A3  A wrong link → 404', r.code === 404, `${r.code}`);
+    r = await call(null, 'POST', `/api/v1/public/plan-shares/${token}/respond`, { decision: 'APPROVE' });
+    check('A4  Responding needs a name → 400', r.code === 400, `${r.code}`);
+    r = await call(null, 'POST', `/api/v1/public/plan-shares/${token}/respond`, { decision: 'APPROVE', name: 'Bola (Zebet)' });
+    check('A5  Client approves → the agency is told', r.code === 200 && r.body.data.decision === 'APPROVED' && db.notifications.some((n) => eq(n.userId, U.ownerA) && /Bola \(Zebet\) approved/.test(n.title)), `${r.code} ${r.body.message}`);
+    await new Promise((res) => setTimeout(res, 20));
+    await call(U.ownerA, 'PUT', `/api/v1/media-plans/drafts/${CP.companyA._id}`, { lines: [{ ...newsLine, startDate: day(140), endDate: day(175) }], creativeId: String(adA._id) });
+    r = await call(U.ownerA, 'GET', '/api/v1/media-plans/drafts');
+    check('A6  Changing the plan after approval is flagged ("changed since approval")', r.code === 200 && r.body.data.drafts[0].share.decision === 'APPROVED' && r.body.data.drafts[0].share.changedSince === true, JSON.stringify(r.body.data?.drafts?.[0]?.share));
+    r = await call(U.ownerA, 'GET', `/api/v1/media-plans/drafts/${CP.companyA._id}/export`);
+    check('A7  The saved plan downloads as Excel too (a proposal)', r.code === 200 && r.text.startsWith('PK'), `${r.code}`);
+
+    // ── P: copy a plan; onboarding; admin overview; support view ──
+    r = await call(U.ownerA, 'GET', '/api/v1/media-plans/sources');
+    check('P1  Plans to copy from: this campaign (saved and booked)', r.code === 200 && r.body.data.some((c) => eq(c._id, CP.companyA._id) && c.bookedSpots > 0), `${r.code}`);
+    r = await call(U.ownerA, 'GET', `/api/v1/media-plans/sources/${CP.companyA._id}`);
+    check('P2  Copying gives its lines (media house, rate, spots per day)', r.code === 200 && r.body.data.length === 1 && r.body.data[0].spotsByDay[4] === 1, JSON.stringify(r.body.data));
+    r = await call(U.ownerA, 'GET', '/api/v1/onboarding');
+    const stepOf = (k) => (r.body.data?.steps || []).find((x) => x.key === k);
+    check('P3  Agency checklist: wallet funded, discounts entered, plan booked are ticked', r.code === 200 && stepOf('wallet')?.done && stepOf('discounts')?.done && stepOf('plan')?.done, JSON.stringify(r.body.data?.steps?.map((x) => [x.key, x.done])));
+    r = await call(U.station, 'GET', '/api/v1/onboarding');
+    check('P4  Media house checklist (rates, calendar, bank account, discounts)', r.code === 200 && r.body.data.steps.some((x) => x.key === 'payout') && r.body.data.steps.find((x) => x.key === 'rates').done === true, `${r.code}`);
+    r = await call(U.admin, 'GET', '/api/v1/admin/money-overview');
+    check('P5  Admin overview: money held/spent/refunded, media house earnings, top agencies and stations', r.code === 200 && r.body.data.advertisers.held > 0 && r.body.data.mediaHouses.earned > 0 && r.body.data.topAgencies[0]?.name === 'Advertiser Co', JSON.stringify(r.body.data?.advertisers));
+    r = await call(U.ownerA, 'POST', '/api/v1/admin/support-view', { userId: String(U.ownerA) });
+    check('P6  Only admins open a support view → 403', r.code === 403, `${r.code}`);
+    r = await call(U.admin, 'POST', '/api/v1/admin/support-view', { userId: String(U.ownerA) });
+    const sv = r.body.data?.token;
+    const sv1 = await call(null, 'GET', '/api/v1/wallet', undefined, { Authorization: `Bearer ${sv}` });
+    const sv2 = await call(null, 'POST', '/api/v1/wallet/fund', { amount: 5000 }, { Authorization: `Bearer ${sv}` });
+    check('P7  Support view sees the account (read) but cannot change anything (403 READ_ONLY)', r.code === 200 && sv1.code === 200 && sv2.code === 403 && sv2.body.code === 'READ_ONLY', `${r.code} ${sv1.code} ${sv2.code}`);
+
+    // ── M: morning briefing; rate card change ──
+    const { runBriefings } = src('utils/reminders');
+    const lagosToday = new Date(Date.now() + 3600000).toISOString().slice(0, 10);
+    bk(future[2]._id).date = new Date(`${lagosToday}T00:00:00.000Z`);
+    const at8 = new Date(`${lagosToday}T07:00:00.000Z`); // 08:00 Lagos
+    r = await runBriefings(at8);
+    check("M1  Morning briefing: the media house gets today's spot count and run sheet link", r.sent === 1 && db.notifications.some((n) => eq(n.userId, U.station) && /^Today at/.test(n.title) && /run-sheet/.test(n.link)), JSON.stringify(r));
+    r = await runBriefings(at8);
+    check('M2  …once a day', r.sent === 0, JSON.stringify(r));
+    r = await runBriefings(new Date(`${lagosToday}T04:00:00.000Z`));
+    check('M3  Not before 07:00 Lagos', r.sent === 0, JSON.stringify(r));
+    const rates = fm1.rateCard.map((x) => ({ name: x.name, kind: x.kind, startTime: x.startTime, endTime: x.endTime, spotSeconds: x.spotSeconds, days: x.days, price: x.price + 1000, isActive: true }));
+    r = await call(U.station, 'PUT', `/api/v1/station-portal/stations/${S.fm1._id}/rate-card`, { rates });
+    check('M4  A rate card change tells agencies with plans on it (booked prices stay)', r.code === 200 && db.notifications.some((n) => eq(n.userId, U.ownerA) && /updated its rate card/.test(n.title)) && bk(future[2]._id).pricing.gross === 642000, `${r.code} ${r.body.message}`);
 
     server.close();
     const passed = results.filter(Boolean).length;

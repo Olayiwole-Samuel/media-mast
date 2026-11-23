@@ -8,6 +8,7 @@ const Company = require('../models/Company');
 const AuditLog = require('../models/AuditLog');
 const VolumeAgreement = require('../models/VolumeAgreement');
 const PlanDraft = require('../models/PlanDraft');
+const PlanShare = require('../models/PlanShare');
 const { buildPlan, readSpotsByDay } = require('../utils/mediaPlan');
 const { walletProvider, getOrCreateWallet, round2 } = require('../utils/wallet');
 const { generatePaymentReference } = require('../utils/payments');
@@ -57,6 +58,7 @@ const publicLine = (l) => ({
     rate: l.rate,
     days: l.days,
     spotsByDay: l.spotsByDay,
+    offWeeks: l.offWeeks,
     volumeDiscountStatus: l.volumeDiscountStatus,
     from: l.from,
     to: l.to,
@@ -367,12 +369,13 @@ const cleanLines = (lines) => (Array.isArray(lines) ? lines : []).slice(0, 300)
         spotsByDay: readSpotsByDay(l).map((n) => (Number.isInteger(n) && n >= 0 && n <= 20 ? n : 0)),
         startDate: typeof l.startDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(l.startDate) ? l.startDate : null,
         endDate: typeof l.endDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(l.endDate) ? l.endDate : null,
+        offWeeks: (Array.isArray(l.offWeeks) ? l.offWeeks : []).filter((w) => typeof w === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(w)).slice(0, 120),
     }));
 
 const draftBody = (d) => ({
     campaignId: String(d.campaignId),
     creativeId: d.creativeId ? String(d.creativeId) : undefined,
-    lines: (d.lines || []).map((l) => ({ stationId: String(l.stationId), rateId: String(l.rateId), spotsByDay: [...l.spotsByDay], startDate: l.startDate || undefined, endDate: l.endDate || undefined })),
+    lines: (d.lines || []).map((l) => ({ stationId: String(l.stationId), rateId: String(l.rateId), spotsByDay: [...l.spotsByDay], startDate: l.startDate || undefined, endDate: l.endDate || undefined, offWeeks: [...(l.offWeeks || [])] })),
 });
 
 // GET /media-plans/drafts — every plan in the cart, priced, with the wallet.
@@ -385,7 +388,13 @@ const getDrafts = async (req, res) => {
             const campaign = await Campaign.findOne({ _id: d.campaignId, ...advertiserScope(req) }).select('name startDate endDate status');
             if (!campaign) continue;
             const ctx = d.lines.length ? await preparePlan(req, draftBody(d)) : null;
+            const share = await PlanShare.findOne({ draftId: d._id });
+            const shareInfo = share ? {
+                decision: share.decision || 'WAITING', name: share.responderName || null, comment: share.comment || null, respondedAt: share.respondedAt || null,
+                changedSince: !!(share.respondedAt && new Date(d.changedAt || d.updatedAt) > new Date(share.respondedAt)), path: `/plan-review/${share.token}`,
+            } : null;
             out.push({
+                share: shareInfo,
                 _id: d._id,
                 campaign: { _id: campaign._id, name: campaign.name, startDate: campaign.startDate, endDate: campaign.endDate, status: campaign.status },
                 creativeId: d.creativeId,
@@ -428,9 +437,9 @@ const saveDraft = async (req, res) => {
             return res.json({ success: true, message: 'Plan removed from the cart', data: null });
         }
         if (existing) {
-            await PlanDraft.updateOne({ _id: existing._id }, { $set: { lines, creativeId } });
+            await PlanDraft.updateOne({ _id: existing._id }, { $set: { lines, creativeId, changedAt: new Date() } });
         } else {
-            await PlanDraft.create({ ...scope, userId: advertiserOwner(req).userId, campaignId: campaign._id, lines, creativeId });
+            await PlanDraft.create({ ...scope, userId: advertiserOwner(req).userId, campaignId: campaign._id, lines, creativeId, changedAt: new Date() });
         }
         return res.json({ success: true, message: 'Saved to your cart', data: { lines: lines.length } });
     } catch (error) {
@@ -472,6 +481,7 @@ module.exports = {
     markDayAired,
     getDrafts,
     getDraft,
+    preparePlanFor: preparePlan,
     saveDraft,
     deleteDraft,
     checkoutDraft,

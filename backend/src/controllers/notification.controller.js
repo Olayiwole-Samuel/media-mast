@@ -102,7 +102,9 @@ const runReminderJob = async (req, res) => {
         // The same cron call settles held money (see utils/escrow.js).
         const { runSettlementJob } = require('../utils/reminders');
         const settlement = await runSettlementJob().catch((error) => ({ error: error.name }));
-        return res.json({ success: true, data: { ...result, settlement } });
+        const { runBriefings } = require('../utils/reminders');
+        const briefings = await runBriefings().catch((error) => ({ error: error.name }));
+        return res.json({ success: true, data: { ...result, settlement, briefings } });
     } catch (error) {
         console.error('❌ Reminder job error:', error.name, error.message);
         return res.status(500).json({ success: false, message: 'Reminder job failed' });

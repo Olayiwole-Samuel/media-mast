@@ -324,6 +324,10 @@ const StationSchema = new mongoose.Schema(
             },
         },
 
+        // The last day (Lagos, YYYY-MM-DD) the morning briefing was sent.
+        briefingSentOn: { type: String, default: null },
+        rateCardUpdatedAt: { type: Date, default: null },
+
         // Where its earnings are paid (payout requests snapshot this).
         payoutAccount: {
             bankName: { type: String, default: null },

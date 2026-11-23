@@ -146,7 +146,9 @@ const setRateCard = async (req, res) => {
         await station.save();
         await calendarAudit(req, station, 'SET_RATE_CARD', { rates: rates.length });
 
-        return res.json({ success: true, message: 'Rate card updated', data: { rateCard: station.rateCard } });
+        await require('../models/Station').updateOne({ _id: station._id }, { $set: { rateCardUpdatedAt: new Date() } });
+        await require('../utils/notifications').notifyRateCardChanged(station);
+        return res.json({ success: true, message: 'Rate card updated. Spots already booked keep their price; agencies with plans on your station have been told.', data: { rateCard: station.rateCard } });
     } catch (error) {
         console.error('❌ Set rate card error:', error.name, error.message);
         if (error.name === 'ValidationError') return sendValidationErrors(res, mongooseFieldErrors(error));

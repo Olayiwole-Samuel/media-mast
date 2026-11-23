@@ -28,11 +28,13 @@ if (process.env.VERCEL) {
 
             // Slot reminders (24h and 1h before airing) every 5 minutes.
             // On Vercel a cron service calls POST /api/v1/jobs/reminders instead.
-            const { runReminders, runSettlementJob } = require('./src/utils/reminders');
+            const { runReminders, runSettlementJob, runBriefings } = require('./src/utils/reminders');
             const tick = () => {
                 runReminders().catch((error) => console.error('⚠️ Reminder run failed:', error.name));
                 // Pay out aired spots after the dispute window; chase unconfirmed spots.
                 runSettlementJob().catch((error) => console.error('⚠️ Settlement run failed:', error.name));
+                // Morning briefing for media houses (once a day, from 07:00 Lagos).
+                runBriefings().catch((error) => console.error('⚠️ Briefing run failed:', error.name));
             };
             setInterval(tick, 5 * 60 * 1000).unref();
             tick();

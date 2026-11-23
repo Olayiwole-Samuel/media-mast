@@ -107,5 +107,10 @@ router.post(
 
 // Spots planned / aired / pending and money held / spent, per media house.
 router.get('/:id/tracker', requireAdvertiser, requirePermission('CAMPAIGN_VIEW'), require('../../controllers/mediaPlan.controller').getCampaignTracker);
+// Bulk: cancel or move many spots; the plan as Excel; the proof-of-airing report.
+const ops = require('../../controllers/operations.controller');
+router.post('/:id/bulk', requireAdvertiser, requirePermission('BOOKING_CANCEL'), ops.bulkCampaign);
+router.get('/:id/plan.xlsx', requireAdvertiser, requirePermission('CAMPAIGN_VIEW'), ops.exportCampaignPlan);
+router.get('/:id/report', requireAdvertiser, requirePermission('CAMPAIGN_VIEW'), ops.getCampaignReport);
 
 module.exports = router;

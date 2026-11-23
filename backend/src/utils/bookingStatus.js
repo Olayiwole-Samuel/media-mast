@@ -39,8 +39,9 @@ const BOOKING_STATUS_TRANSITIONS = {
         PENDING: ['ACCEPTED', 'REJECTED', 'CHANGES_REQUESTED'],
         // A media house may mark an accepted spot aired straight away, or say
         // it could not air it (refunded in full).
-        ACCEPTED: ['SCHEDULED', 'COMPLETED', 'NOT_AIRED'],
-        SCHEDULED: ['COMPLETED', 'NOT_AIRED'],
+        // …or ask to move it (the date is no longer available).
+        ACCEPTED: ['SCHEDULED', 'COMPLETED', 'NOT_AIRED', 'CHANGES_REQUESTED'],
+        SCHEDULED: ['COMPLETED', 'NOT_AIRED', 'CHANGES_REQUESTED'],
     },
 };
 
