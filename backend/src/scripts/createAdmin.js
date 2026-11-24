@@ -68,7 +68,7 @@ const createAdmin = async () => {
     }
 
     try {
-        await mongoose.connect(process.env.MONGODB_URI);
+        await require('../utils/database').connectWithDnsFallback(process.env.MONGODB_URI);
         console.log('MongoDB connected');
 
         let user = await User.findOne({ email });

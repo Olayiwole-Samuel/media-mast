@@ -43,7 +43,7 @@ const run = async () => {
     const confirm = (process.argv.find((a) => a.startsWith('--confirm=')) || '').slice('--confirm='.length);
 
     try {
-        await mongoose.connect(process.env.MONGODB_URI);
+        await require('../utils/database').connectWithDnsFallback(process.env.MONGODB_URI);
         const db = mongoose.connection.db;
         const name = db.databaseName;
         console.log(`Database: "${name}"\n`);

@@ -56,7 +56,7 @@ const run = async () => {
     const outFile = path.join(__dirname, '..', '..', 'media-house-logins.csv');
 
     try {
-        await mongoose.connect(process.env.MONGODB_URI);
+        await require('../utils/database').connectWithDnsFallback(process.env.MONGODB_URI);
         console.log(`Connected to database "${mongoose.connection.db.databaseName}"\n`);
 
         const stations = await Station.find({ isActive: true, approvalStatus: 'APPROVED' })

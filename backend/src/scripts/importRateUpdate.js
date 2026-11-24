@@ -33,7 +33,7 @@ const run = async () => {
     }
     const write = process.argv.includes('--yes');
     try {
-        await mongoose.connect(process.env.MONGODB_URI);
+        await require('../utils/database').connectWithDnsFallback(process.env.MONGODB_URI);
         console.log(`Database: "${mongoose.connection.db.databaseName}"${write ? '' : '  (preview: nothing will change)'}\n`);
         let created = 0, updatedPrices = 0, added = 0, unchanged = 0;
 

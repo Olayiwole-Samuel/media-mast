@@ -52,7 +52,7 @@ const run = async () => {
     }
 
     try {
-        await mongoose.connect(process.env.MONGODB_URI);
+        await require('../utils/database').connectWithDnsFallback(process.env.MONGODB_URI);
         console.log(`Connected to database "${mongoose.connection.db.databaseName}"\n`);
 
         for (const card of RATE_CARD_STATIONS) {
