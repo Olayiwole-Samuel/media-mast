@@ -1,27 +1,37 @@
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const Station = require('../models/Station');
-const { RATE_UPDATE_2026 } = require('../data/rateCards2026Agency');
 const { validateRateCard } = require('../validators/station.validator');
 
 dotenv.config({ quiet: true });
 
 // ─────────────────────────────────────────────────────────────
-// RATE UPDATE (agency plans, Nov 2026): radio 30s / 45s, radio time checks,
-// TV 15s. Data: src/data/rateCards2026Agency.js.
+// RATE UPDATES from agency plans. Pick the set with --set:
+//   agency-2026  (default) Nov 2026 agency plans: radio 30s / 45s, radio time
+//                checks, TV 15s. Data: src/data/rateCards2026Agency.js
+//   radio-plan   "Radio Media plan.xlsx": 30s jingles, Mon–Fri prime time,
+//                26 radio stations. Data: src/data/rateCardsRadioPlan2026.js
 //
 // Usage (from backend/):
-//   node src/scripts/importRateUpdate.js          preview (nothing changes)
-//   node src/scripts/importRateUpdate.js --yes    apply
+//   node src/scripts/importRateUpdate.js [--set=radio-plan]          preview (nothing changes)
+//   node src/scripts/importRateUpdate.js [--set=radio-plan] --yes    apply
 //
 // Media houses already on the site: a rate with the same belt times, days,
-// length and kind gets the new price; anything else is added. Their other
-// rates stay as they are. New media houses are created live (approved,
+// length and kind gets the new price; a rate they already sell at that
+// price for those times (e.g. every day, which covers Mon–Fri) is left as it
+// is; anything else is added. Their other rates stay as they are. New media houses are created live (approved,
 // active) with these rates. Run createMediaHouseAccounts.js afterwards to
 // give the new ones a login.
 // ─────────────────────────────────────────────────────────────
 
 const MAX_RATES = 150;
+const SETS = {
+    'agency-2026': { load: () => require('../data/rateCards2026Agency').RATE_UPDATE_2026, source: 'the November 2026 agency rate update' },
+    'radio-plan': { load: () => require('../data/rateCardsRadioPlan2026').RATE_UPDATE_RADIO_PLAN, source: 'the 2026 radio media plan' },
+};
+// Same times, length and kind, sold on at least these days ([] = every day).
+const sameSlot = (a, b) => keyOf({ ...a, days: [] }) === keyOf({ ...b, days: [] });
+const coversDays = (have, want) => !(have.days || []).length || (want.days || []).every((d) => have.days.includes(d));
 const keyOf = (r) => [r.kind, r.startTime || '', r.endTime || '', r.spotSeconds || '', [...(r.days || [])].sort().join(','), r.size || '', r.colour || ''].join('|');
 const plain = (r) => ({ name: r.name, kind: r.kind, code: r.code || null, startTime: r.startTime || null, endTime: r.endTime || null, spotSeconds: r.spotSeconds ?? null, days: r.days || [], size: r.size || null, colour: r.colour || null, price: r.price, isActive: r.isActive !== false });
 
@@ -32,12 +42,19 @@ const run = async () => {
         return;
     }
     const write = process.argv.includes('--yes');
+    const setName = (process.argv.find((a) => a.startsWith('--set=')) || '--set=agency-2026').slice(6);
+    if (!SETS[setName]) {
+        console.error(`Unknown --set "${setName}". Use one of: ${Object.keys(SETS).join(', ')}. Nothing was changed.`);
+        process.exitCode = 1;
+        return;
+    }
+    const cards = SETS[setName].load();
     try {
         await require('../utils/database').connectWithDnsFallback(process.env.MONGODB_URI);
         console.log(`Database: "${mongoose.connection.db.databaseName}"${write ? '' : '  (preview: nothing will change)'}\n`);
         let created = 0, updatedPrices = 0, added = 0, unchanged = 0;
 
-        for (const card of RATE_UPDATE_2026) {
+        for (const card of cards) {
             const existing = await Station.findOne({ slug: card.slug });
             if (existing) {
                 const merged = (existing.rateCard || []).map((r) => plain(r.toObject ? r.toObject() : r));
@@ -45,6 +62,10 @@ const run = async () => {
                 let up = 0, add = 0;
                 for (const r of card.rateCard) {
                     const i = index.get(keyOf(r));
+                    if (i === undefined && merged.some((m) => m.isActive !== false && sameSlot(m, r) && coversDays(m, r) && Number(m.price) === Number(r.price))) {
+                        unchanged += 1; // already sold at this price on these days
+                        continue;
+                    }
                     if (i !== undefined) {
                         if (Number(merged[i].price) !== Number(r.price)) { merged[i].price = r.price; up += 1; } else unchanged += 1;
                         merged[i].isActive = true;
@@ -78,7 +99,7 @@ const run = async () => {
                     name: card.name,
                     slug: card.slug,
                     type: card.type,
-                    description: `${card.type === 'TV' ? 'TV station' : 'Radio station'}${where ? ` in ${where}` : ''}. Rates from the November 2026 agency rate update.`,
+                    description: `${card.type === 'TV' ? 'TV station' : 'Radio station'}${where ? ` in ${where}` : ''}. Rates from ${SETS[setName].source}.`,
                     location: card.location,
                     pricing: { amount: Math.min(...card.rateCard.map((r) => r.price)), currency: 'NGN', unit: 'SPOT' },
                     approvalStatus: 'APPROVED',
