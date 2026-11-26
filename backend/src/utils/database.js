@@ -30,7 +30,8 @@ const logConnectionError = (context, error) => {
 
 // An Atlas "mongodb+srv://" address needs DNS SRV/TXT lookups. Some networks'
 // DNS servers can't answer those (ESERVFAIL / ETIMEOUT) although the internet
-// works; then retry once through public DNS (Google, Cloudflare).
+// works; then retry once through public DNS (Google, Cloudflare). Not on
+// Vercel: its DNS is fine, and a cold start should try once.
 const DNS_FAILURE = /ESERVFAIL|ETIMEOUT|ECONNREFUSED|ENOTFOUND|EREFUSED/;
 const isDnsLookupFailure = (error) => /query(Srv|Txt)/.test(String(error && error.message)) && DNS_FAILURE.test(String(error && (error.code || error.message)));
 let usingPublicDns = false;
@@ -39,7 +40,7 @@ const connectWithDnsFallback = async (uri, options) => {
     try {
         return await mongoose.connect(uri, options);
     } catch (error) {
-        if (usingPublicDns || !isDnsLookupFailure(error)) throw error;
+        if (process.env.VERCEL || usingPublicDns || !isDnsLookupFailure(error)) throw error;
         usingPublicDns = true;
         dns.setServers(['8.8.8.8', '1.1.1.1', ...dns.getServers()]);
         console.warn('⚠️ This network could not look up the database address; retrying through public DNS (8.8.8.8 / 1.1.1.1).');
