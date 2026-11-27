@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Building2, Megaphone, RadioTower, Mail, User, Phone, ArrowLeft, Check } from "lucide-react";
-import { saveSession } from "@/lib/auth";
+import { saveSession, homeRouteFor } from "@/lib/auth";
 import { NIGERIAN_STATES, MEDIA_TYPES } from "@/lib/nigeria";
 import AuthShell from "@/components/auth/AuthShell";
 import AuthInput from "@/components/auth/AuthInput";
@@ -111,7 +111,8 @@ export default function RegisterPage() {
             const user = data?.data?.user;
             if (!data?.token || !user) throw new Error("Your account was created. Please sign in.");
             saveSession(data.token, user);
-            window.location.assign("/verify");
+            // Straight to their dashboard; only an account awaiting approval goes to /verify.
+            window.location.assign(homeRouteFor(user));
         } catch (err) {
             setError(err.message || "Something went wrong. Please try again.");
         } finally {
