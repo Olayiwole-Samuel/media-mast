@@ -8,7 +8,10 @@ const AuditLog = require('../models/AuditLog');
 const {
     getOrCreateWallet, credit, debit, fundWallet, fundingProvider, round2, MIN_FUND, MAX_FUND,
 } = require('../utils/wallet');
-const { advertiserOwner } = require('../utils/advertiser');
+const { advertiserOwner, ownsRecord } = require('../utils/advertiser');
+const { paystackMode, paystackEnabled } = require('../utils/paystack');
+const FundingIntent = require('../models/FundingIntent');
+const { startFunding, confirmFunding, liveBlocked } = require('../utils/funding');
 const { notifyWalletCredited } = require('../utils/notifications');
 
 // ─────────────────────────────────────────────────────────────
@@ -92,7 +95,13 @@ const getMyWallet = async (req, res) => {
                 wallet: publicWallet(wallet),
                 byCampaign,
                 recent: sorted.slice(0, 10).map((t) => publicTransaction(t, names)),
-                funding: { testMode: fundingProvider.isTestMode === true, min: MIN_FUND, max: MAX_FUND },
+                funding: {
+                    provider: paystackMode() === 'OFF' ? fundingProvider.name : 'PAYSTACK',
+                    testMode: paystackMode() !== 'LIVE',
+                    available: paystackMode() !== 'INVALID',
+                    min: MIN_FUND,
+                    max: MAX_FUND,
+                },
             },
         });
     } catch (error) {
@@ -128,13 +137,77 @@ const readAmount = (raw) => {
     return Number.isFinite(n) ? round2(n) : NaN;
 };
 
-// POST /wallet/fund { amount } — owner only. Test mode: credited at once.
+// A path on this site to come back to (never another site).
+const safeBack = (raw) => (typeof raw === 'string' && /^\/(?![/\\])[^\\\s]*$/.test(raw) && raw.length <= 400 ? raw : null);
+
+// Where Paystack sends the payer back: the site they came from (its Origin
+// already passed the CORS check), else APP_URL.
+const walletUrl = (req) => {
+    const site = String(req.get('origin') || process.env.APP_URL || 'http://localhost:3000').trim().replace(/\/+$/, '');
+    return `${site}${req.user.accountType === 'INDIVIDUAL' ? '/wallet' : '/company/wallet'}`;
+};
+
+// Paystack: nothing is credited here, the payer is sent to its checkout.
+const fundWithPaystack = async (req, res, amount) => {
+    if (!paystackEnabled()) return res.status(503).json({ success: false, message: 'Payments are not set up correctly. Please contact support.' });
+    if (await liveBlocked()) {
+        console.error('❌ Live top-up refused: this database has test top-ups');
+        return res.status(503).json({ success: false, message: 'Payments are not open yet. Please contact support.' });
+    }
+    try {
+        const url = walletUrl(req);
+        const { intent, authorizationUrl } = await startFunding(advertiserOwner(req), {
+            amount, email: req.user.email, actorId: req.user._id, back: safeBack(req.body?.back), callbackUrl: url, cancelUrl: url,
+        });
+        return res.status(201).json({
+            success: true,
+            message: 'Continue to Paystack to pay',
+            data: { provider: 'PAYSTACK', reference: intent.reference, authorizationUrl, testMode: intent.mode !== 'LIVE' },
+        });
+    } catch (error) {
+        console.error('❌ Paystack checkout error:', error.name, error.message);
+        if (error.name !== 'PaystackError') return res.status(500).json({ success: false, message: 'Failed to fund your wallet' });
+        return res.status(502).json({ success: false, message: 'We could not open the Paystack checkout. You have not been charged. Please try again.' });
+    }
+};
+
+// GET /wallet/fund/:reference — the payer is back from Paystack: was it paid?
+const getFundingResult = async (req, res) => {
+    if (req.user.accountType === 'EMPLOYEE') return res.status(403).json(OWNER_ONLY);
+    try {
+        const own = await FundingIntent.findOne({ reference: String(req.params.reference) });
+        if (!own || !ownsRecord(req, own)) return res.status(404).json({ success: false, message: 'Top-up not found' });
+        let intent = own;
+        try {
+            const result = await confirmFunding(own.reference);
+            intent = result.intent;
+        } catch (error) {
+            if (error.name !== 'PaystackError') throw error;
+            console.error('⚠️ Top-up could not be checked:', error.message); // stays pending; checked again later
+        }
+        const naira = `₦${intent.amount.toLocaleString()}`;
+        const message = {
+            PAID: `${naira} added to your wallet${intent.mode === 'LIVE' ? '.' : ' (Paystack test payment: no real money moved).'}`,
+            PENDING: `Your ${naira} payment isn't confirmed yet. It appears here as soon as Paystack confirms it.`,
+            FAILED: `The ${naira} payment didn't go through. Your wallet was not credited.`,
+            MISMATCH: 'We received a payment that needs checking. Media Masters has been told and will sort it out.',
+        }[intent.status];
+        return res.json({ success: true, message, data: { reference: intent.reference, status: intent.status, amount: intent.amount, back: intent.back, testMode: intent.mode !== 'LIVE' } });
+    } catch (error) {
+        console.error('❌ Top-up check error:', error.name, error.message);
+        return res.status(500).json({ success: false, message: 'Failed to check the payment' });
+    }
+};
+
+// POST /wallet/fund { amount, back } — owner only. With Paystack: returns its
+// checkout address. Without a key (test mode): credited at once.
 const fundMyWallet = async (req, res) => {
     if (req.user.accountType === 'EMPLOYEE') return res.status(403).json(OWNER_ONLY);
     const amount = readAmount(req.body?.amount);
     if (!(amount >= MIN_FUND) || amount > MAX_FUND) {
         return res.status(400).json({ success: false, message: `Enter an amount between ₦${MIN_FUND.toLocaleString()} and ₦${MAX_FUND.toLocaleString()}` });
     }
+    if (paystackMode() !== 'OFF') return fundWithPaystack(req, res, amount);
     try {
         const owner = advertiserOwner(req);
         const result = await fundWallet(owner, amount, { actorId: req.user._id });
@@ -269,6 +342,7 @@ module.exports = {
     getMyWallet,
     getMyTransactions,
     fundMyWallet,
+    getFundingResult,
     updateMyWalletSettings,
     getAdminWallets,
     getAdminWalletTransactions,

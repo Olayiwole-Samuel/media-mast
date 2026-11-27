@@ -26,7 +26,7 @@ dotenv.config({ quiet: true });
 // ─────────────────────────────────────────────────────────────
 
 const ACTIVITY = [
-    'campaigns', 'bookings', 'payments', 'creatives', 'wallets', 'wallettransactions',
+    'campaigns', 'bookings', 'payments', 'creatives', 'wallets', 'wallettransactions', 'fundingintents',
     'plandrafts', 'planshares', 'payoutrequests', 'volumeagreements', 'notifications',
     'auditlogs', 'subscriptions', 'schedules', 'uploadsessions',
 ];

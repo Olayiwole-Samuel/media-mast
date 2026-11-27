@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
     Wallet as WalletIcon, Plus, Loader2, FlaskConical, ArrowDownLeft, ArrowUpRight, Undo2, SlidersHorizontal,
     BellRing, AlertTriangle, CheckCircle2, Lock,
 } from "lucide-react";
-import { fundWallet, getWalletTransactions, updateWalletSettings } from "@/lib/api";
+import { fundWallet, getFundingResult, getWalletTransactions, updateWalletSettings } from "@/lib/api";
 import { useWallet, walletChanged } from "@/lib/wallet";
 import { useSession } from "@/lib/auth";
 import { advertiserPaths } from "@/lib/cart";
@@ -15,7 +15,8 @@ import { formatMoney } from "@/lib/status";
 import { PageLoading, PageError } from "@/components/common/PageState";
 
 // The advertiser's wallet: fund it any time, every booking is paid from it,
-// refunds come back to it. Funding is in test mode until Paystack is connected.
+// refunds come back to it. "Add money" goes to Paystack's checkout, which
+// returns here with ?reference=…; without Paystack it is instant test money.
 
 const QUICK = [100000, 500000, 1000000, 5000000];
 const FILTERS = [
@@ -48,17 +49,26 @@ function Stat({ label, value, hint, strong }) {
     );
 }
 
+// Same-site paths only.
+const sitePath = (raw) => (typeof raw === "string" && /^\/(?![/\\])/.test(raw) ? raw : "");
+
 export default function WalletView() {
     const params = useSearchParams();
+    const router = useRouter();
+    const pathname = usePathname();
     const { user } = useSession();
     const paths = advertiserPaths(user);
     const { loading, error, data, wallet, reload } = useWallet();
 
     const [amount, setAmount] = useState(() => digits(params.get("fund")));
     // Where to go back to after funding (the cart or the plan being built). Same-site paths only.
-    const back = (() => { const b = params.get("back") || ""; return b.startsWith("/") && !b.startsWith("//") ? b : ""; })();
+    const [back, setBack] = useState(() => sitePath(params.get("back")));
     const [funding, setFunding] = useState(false);
     const [notice, setNotice] = useState(null);
+    // Back from Paystack: the top-up being confirmed.
+    const [returned] = useState(() => ({ reference: params.get("reference") || params.get("trxref") || "", cancelled: params.get("cancelled") || "" }));
+    const [checking, setChecking] = useState(!!returned.reference);
+    const checked = useRef(false);
     const [threshold, setThreshold] = useState("");
     const [savingAlert, setSavingAlert] = useState(false);
 
@@ -69,6 +79,49 @@ export default function WalletView() {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         if (wallet) setThreshold(wallet.lowBalanceThreshold ? String(wallet.lowBalanceThreshold) : "");
     }, [wallet]);
+
+    useEffect(() => {
+        const reference = returned.reference || returned.cancelled;
+        if (!reference || checked.current) return undefined;
+        checked.current = true;
+        // Clean address, so a refresh or a shared link doesn't check again.
+        router.replace(pathname, { scroll: false });
+        const check = async () => {
+            for (let attempt = 0; attempt < 6; attempt += 1) {
+                try {
+                    const { data, message } = await getFundingResult(reference);
+                    if (data?.back) setBack(sitePath(data.back));
+                    if (data?.status === "PAID") {
+                        await reload(); // the new balance first, then the message
+                        setNotice({ type: "success", text: message });
+                        walletChanged();
+                        break;
+                    }
+                    if (data?.status === "PENDING" && returned.cancelled) {
+                        setNotice({ type: "info", text: "You left the Paystack checkout. Nothing was added to your wallet." });
+                        break;
+                    }
+                    setNotice({ type: data?.status === "PENDING" ? "info" : "error", text: message });
+                    if (data?.status !== "PENDING") break;
+                } catch (err) {
+                    setNotice({ type: "error", text: err?.message || "We couldn't check the payment yet. If you paid, it will appear here shortly." });
+                    if (err?.status === 404) break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 4000));
+            }
+            setChecking(false);
+        };
+        check();
+        return undefined;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // The browser's Back button from Paystack can restore this page as it was left.
+    useEffect(() => {
+        const onShow = (e) => { if (e.persisted) setFunding(false); };
+        window.addEventListener("pageshow", onShow);
+        return () => window.removeEventListener("pageshow", onShow);
+    }, []);
 
     const loadHistory = async (page = 1, type = filter) => {
         setHistory((h) => ({ ...h, loading: true }));
@@ -91,6 +144,8 @@ export default function WalletView() {
     const currency = wallet?.currency || "NGN";
     const min = data?.funding?.min || 1000;
     const testMode = data?.funding?.testMode !== false;
+    const viaPaystack = data?.funding?.provider === "PAYSTACK";
+    const available = data?.funding?.available !== false;
     const byCampaign = data?.byCampaign || [];
 
     const handleFund = async (e) => {
@@ -100,13 +155,17 @@ export default function WalletView() {
         if (!(value >= min)) return setNotice({ type: "error", text: `Enter at least ${formatMoney(min, currency)}.` });
         setFunding(true);
         try {
-            const res = await fundWallet(value);
+            const res = await fundWallet(value, back);
+            if (res?.data?.authorizationUrl) {
+                window.location.assign(res.data.authorizationUrl); // stays "busy" until the checkout opens
+                return;
+            }
             setNotice({ type: "success", text: res?.message || "Wallet funded." });
             setAmount("");
             walletChanged();
+            setFunding(false);
         } catch (err) {
             setNotice({ type: "error", text: err?.message || "We couldn't fund your wallet." });
-        } finally {
             setFunding(false);
         }
     };
@@ -140,7 +199,11 @@ export default function WalletView() {
             {testMode && (
                 <div className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
                     <FlaskConical className="h-5 w-5 shrink-0" />
-                    <p><span className="font-semibold">Test mode.</span> Top-ups are added instantly and no real money moves. Card and bank payments (Paystack) will be connected before launch.</p>
+                    {viaPaystack ? (
+                        <p><span className="font-semibold">Paystack test mode.</span> Pay with a Paystack test card: 4084 0840 8408 4081, any future expiry date, CVV 408. No real money moves.</p>
+                    ) : (
+                        <p><span className="font-semibold">Test mode.</span> Top-ups are added instantly and no real money moves.</p>
+                    )}
                 </div>
             )}
 
@@ -158,8 +221,14 @@ export default function WalletView() {
                 </div>
             )}
 
+            {checking && (
+                <p role="status" className="flex items-center gap-2 rounded-lg bg-slate-100 px-4 py-3 text-sm text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Confirming your payment with Paystack…
+                </p>
+            )}
+
             {notice && (
-                <div role={notice.type === "error" ? "alert" : "status"} className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm ${notice.type === "error" ? "bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300" : "bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200"}`}>
+                <div role={notice.type === "error" ? "alert" : "status"} className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm ${notice.type === "info" ? "bg-amber-50 text-amber-900 dark:bg-amber-500/10 dark:text-amber-200" : notice.type === "error" ? "bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300" : "bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200"}`}>
                     {notice.type === "success" && <CheckCircle2 className="h-4 w-4" />} {notice.text}
                 </div>
             )}
@@ -188,11 +257,16 @@ export default function WalletView() {
                             <span className="sr-only">Amount</span>
                             <input inputMode="numeric" value={amount ? Number(digits(amount)).toLocaleString("en-NG") : ""} onChange={(e) => setAmount(digits(e.target.value))} placeholder={`Amount (min ${formatMoney(min, currency)})`} className={inputClass} />
                         </label>
-                        <button type="submit" disabled={funding} className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-60">
+                        <button type="submit" disabled={funding || !available} className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-60">
                             {funding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                            {amount ? `Add ${formatMoney(Number(digits(amount)), currency)}` : "Add money"}{testMode ? " (test)" : ""}
+                            {funding && viaPaystack ? "Opening Paystack…" : <>{amount ? `Add ${formatMoney(Number(digits(amount)), currency)}` : "Add money"}{testMode ? " (test)" : ""}</>}
                         </button>
                     </div>
+                    {!available ? (
+                        <p className="mt-3 text-xs text-red-600 dark:text-red-400">Payments are not available right now. Please contact support.</p>
+                    ) : viaPaystack && (
+                        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">You pay on Paystack&apos;s secure page (card, bank transfer, USSD) and come straight back here. Media Masters never sees your card details.</p>
+                    )}
                 </form>
 
                 <form onSubmit={handleAlert} className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">

@@ -104,7 +104,9 @@ const runReminderJob = async (req, res) => {
         const settlement = await runSettlementJob().catch((error) => ({ error: error.name }));
         const { runBriefings } = require('../utils/reminders');
         const briefings = await runBriefings().catch((error) => ({ error: error.name }));
-        return res.json({ success: true, data: { ...result, settlement, briefings } });
+        const { runPaystackChecks } = require('../utils/reminders');
+        const paystack = await runPaystackChecks().catch((error) => ({ error: error.name }));
+        return res.json({ success: true, data: { ...result, settlement, briefings, paystack } });
     } catch (error) {
         console.error('❌ Reminder job error:', error.name, error.message);
         return res.status(500).json({ success: false, message: 'Reminder job failed' });

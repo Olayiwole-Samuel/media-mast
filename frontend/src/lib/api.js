@@ -718,6 +718,9 @@ export const getOnboarding = async () => authFetch('/api/v1/onboarding');
 export const getAdminMoneyOverview = async () => authFetch('/api/v1/admin/money-overview');
 export const getSupportAccounts = async (q) => authFetch(`/api/v1/admin/support-accounts${q ? `?q=${encodeURIComponent(q)}` : ''}`);
 export const startSupportView = async (userId) => authFetch('/api/v1/admin/support-view', { method: 'POST', body: JSON.stringify({ userId }) });
+export const getPayoutBanks = async () => authFetch('/api/v1/station-portal/banks');
+export const resolveStationAccount = async (stationId, { bankCode, accountNumber }) =>
+    authFetch(`/api/v1/station-portal/stations/${stationId}/resolve-account`, { method: 'POST', body: JSON.stringify({ bankCode, accountNumber }) });
 export const setStationPayoutAccount = async (stationId, account) =>
     authFetch(`/api/v1/station-portal/stations/${stationId}/payout-account`, { method: 'PUT', body: JSON.stringify(account) });
 export const requestStationPayout = async (stationId, amount) =>
@@ -728,6 +731,13 @@ export const resolveAdminDispute = async (id, { outcome, refundAmount, resolutio
 export const getAdminPayouts = async (status) => authFetch(`/api/v1/admin/payouts${status ? `?status=${status}` : ''}`);
 export const markAdminPayoutPaid = async (id, reference) => authFetch(`/api/v1/admin/payouts/${id}/paid`, { method: 'POST', body: JSON.stringify({ reference }) });
 export const declineAdminPayout = async (id, note) => authFetch(`/api/v1/admin/payouts/${id}/decline`, { method: 'POST', body: JSON.stringify({ note }) });
+// Paystack: connection, top-ups, sending payouts.
+export const getPaystackStatus = async () => authFetch('/api/v1/admin/paystack');
+export const getPaystackTopUps = async (status) => authFetch(`/api/v1/admin/paystack/top-ups${status ? `?status=${status}` : ''}`);
+export const checkPaystackTopUp = async (reference) => authFetch(`/api/v1/admin/paystack/top-ups/${encodeURIComponent(reference)}/check`, { method: 'POST' });
+export const sendAdminPayout = async (id) => authFetch(`/api/v1/admin/payouts/${id}/send`, { method: 'POST' });
+export const approveAdminPayout = async (id, otp) => authFetch(`/api/v1/admin/payouts/${id}/otp`, { method: 'POST', body: JSON.stringify({ otp }) });
+export const refreshAdminPayout = async (id) => authFetch(`/api/v1/admin/payouts/${id}/refresh`, { method: 'POST' });
 export const getSettlementSettings = async () => authFetch('/api/v1/admin/settlement-settings');
 export const updateSettlementSettings = async (values) => authFetch('/api/v1/admin/settlement-settings', { method: 'PATCH', body: JSON.stringify(values) });
 
@@ -931,7 +941,9 @@ export const getAdminAnalytics = async () => authFetch('/api/v1/admin/analytics'
 export const getWallet = async () => authFetch('/api/v1/wallet');
 export const getWalletTransactions = async ({ page = 1, type } = {}) =>
     authFetch(`/api/v1/wallet/transactions?page=${page}${type ? `&type=${encodeURIComponent(type)}` : ''}`);
-export const fundWallet = async (amount) => authFetch('/api/v1/wallet/fund', { method: 'POST', body: JSON.stringify({ amount }) });
+// With Paystack: data.authorizationUrl is its checkout. back: where to return to afterwards.
+export const fundWallet = async (amount, back) => authFetch('/api/v1/wallet/fund', { method: 'POST', body: JSON.stringify({ amount, back: back || undefined }) });
+export const getFundingResult = async (reference) => authFetch(`/api/v1/wallet/fund/${encodeURIComponent(reference)}`);
 export const updateWalletSettings = async ({ lowBalanceThreshold }) =>
     authFetch('/api/v1/wallet/settings', { method: 'PATCH', body: JSON.stringify({ lowBalanceThreshold }) });
 export const getAdminWallets = async () => authFetch('/api/v1/admin/wallets');

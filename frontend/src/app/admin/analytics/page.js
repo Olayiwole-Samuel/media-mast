@@ -85,7 +85,7 @@ export default function AdminAnalyticsPage() {
                     <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900 dark:text-white">
                         <BarChart3 className="h-6 w-6 text-emerald-500" /> Platform analytics
                     </h1>
-                    <p className="mt-1 text-slate-500 dark:text-slate-400">From real bookings and payments only — no estimates. Payments are in test mode until Paystack goes live.</p>
+                    <p className="mt-1 text-slate-500 dark:text-slate-400">From real bookings and payments only — no estimates.</p>
                 </div>
                 <button type="button" onClick={load} className="inline-flex items-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
                     <RefreshCw className="h-4 w-4" /> Refresh

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Coins, Loader2, Landmark, Send, CheckCircle2 } from "lucide-react";
-import { getStationEarnings, setStationPayoutAccount, requestStationPayout } from "@/lib/api";
+import { getStationEarnings, getPayoutBanks, resolveStationAccount, setStationPayoutAccount, requestStationPayout } from "@/lib/api";
 import { formatMoney, formatDate } from "@/lib/status";
 import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/PageState";
 
@@ -11,8 +11,52 @@ import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/Page
 // after VAT and any commission, available to pay out to the bank.
 
 const TX_LABEL = { EARNING: "Spot aired: earned", PAYOUT: "Payout requested", PAYOUT_REVERSED: "Payout declined: returned" };
-const PAYOUT_TONE = { PENDING: "text-amber-600", PAID: "text-emerald-600", DECLINED: "text-red-600" };
+const PAYOUT_TONE = { PENDING: "text-amber-600", PROCESSING: "text-sky-600", PAID: "text-emerald-600", DECLINED: "text-red-600" };
 const inputClass = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white";
+
+// Paystack connected: pick the bank, and the bank says whose account it is.
+function BankAccountForm({ stationId, account, setAccount, busy, onSave }) {
+    const [banks, setBanks] = useState({ loading: true, error: "", list: [] });
+    const [check, setCheck] = useState({ busy: false, name: "", error: "", needsName: false });
+    useEffect(() => {
+        getPayoutBanks()
+            .then((r) => setBanks({ loading: false, error: "", list: r.data || [] }))
+            .catch((err) => setBanks({ loading: false, error: err?.message || "Couldn't load the banks.", list: [] }));
+    }, []);
+
+    const ready = !!account.bankCode && /^\d{10}$/.test(account.accountNumber || "");
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setCheck({ busy: ready, name: "", error: "", needsName: false });
+        if (!ready) return undefined;
+        let stale = false;
+        const timer = setTimeout(async () => {
+            try {
+                const r = await resolveStationAccount(stationId, { bankCode: account.bankCode, accountNumber: account.accountNumber });
+                if (!stale) setCheck({ busy: false, name: r.data?.accountName || "", error: "", needsName: false });
+            } catch (err) {
+                if (!stale) setCheck({ busy: false, name: "", error: err?.message || "Couldn't check the account.", needsName: err?.data?.code === "NEEDS_NAME" });
+            }
+        }, 400);
+        return () => { stale = true; clearTimeout(timer); };
+    }, [ready, stationId, account.bankCode, account.accountNumber]);
+
+    return (
+        <form onSubmit={onSave} className="space-y-2">
+            <select value={account.bankCode || ""} onChange={(e) => setAccount({ ...account, bankCode: e.target.value })} className={inputClass} aria-label="Bank" required disabled={banks.loading}>
+                <option value="">{banks.loading ? "Loading banks…" : "Choose your bank"}</option>
+                {banks.list.map((b) => <option key={b.code} value={b.code}>{b.name}</option>)}
+            </select>
+            {banks.error && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{banks.error}</p>}
+            <input value={account.accountNumber || ""} onChange={(e) => setAccount({ ...account, accountNumber: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="10-digit account number" inputMode="numeric" className={inputClass} required />
+            {check.busy && <p className="flex items-center gap-1.5 text-xs text-slate-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking with the bank…</p>}
+            {check.name && <p className="flex items-center gap-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="h-4 w-4" /> {check.name}</p>}
+            {check.error && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{check.error}</p>}
+            {check.needsName && <input value={account.accountName || ""} onChange={(e) => setAccount({ ...account, accountName: e.target.value })} placeholder="Account name" className={inputClass} required />}
+            <button type="submit" disabled={busy || check.busy || !ready || !(check.name || check.needsName)} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-60">Save account</button>
+        </form>
+    );
+}
 
 function StationMoney({ entry, settings, onChanged }) {
     const [account, setAccount] = useState(entry.payoutAccount?.accountNumber ? entry.payoutAccount : { bankName: "", accountNumber: "", accountName: "" });
@@ -20,13 +64,16 @@ function StationMoney({ entry, settings, onChanged }) {
     const [amount, setAmount] = useState("");
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState(null);
-    const pending = entry.payouts.find((p) => p.status === "PENDING");
+    const pending = entry.payouts.find((p) => p.status === "PENDING" || p.status === "PROCESSING");
+    // Saved before Paystack was connected: the bank has to be chosen again.
+    const needsBank = settings.paystack && !!entry.payoutAccount?.accountNumber && !entry.payoutAccount?.bankCode;
 
     const saveAccount = async (e) => {
         e.preventDefault();
         setBusy(true); setMessage(null);
         try {
-            await setStationPayoutAccount(entry.station._id, account);
+            const res = await setStationPayoutAccount(entry.station._id, account);
+            if (res?.data) setAccount(res.data);
             setEditing(false);
             setMessage({ type: "success", text: "Bank account saved." });
             onChanged();
@@ -101,7 +148,10 @@ function StationMoney({ entry, settings, onChanged }) {
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
                     <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><Landmark className="h-4 w-4 text-emerald-600" /> Bank account for payouts</h3>
-                    {editing ? (
+                    {needsBank && <p className="mb-2 text-xs text-amber-700 dark:text-amber-300">Payouts now go through Paystack. Choose your bank again so we can pay you.</p>}
+                    {editing && settings.paystack ? (
+                        <BankAccountForm stationId={entry.station._id} account={account} setAccount={setAccount} busy={busy} onSave={saveAccount} />
+                    ) : editing ? (
                         <form onSubmit={saveAccount} className="space-y-2">
                             <input value={account.bankName} onChange={(e) => setAccount({ ...account, bankName: e.target.value })} placeholder="Bank (e.g. GTBank)" className={inputClass} required />
                             <input value={account.accountNumber} onChange={(e) => setAccount({ ...account, accountNumber: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="10-digit account number" inputMode="numeric" className={inputClass} required />
@@ -120,7 +170,7 @@ function StationMoney({ entry, settings, onChanged }) {
                 <form onSubmit={payout} className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
                     <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><Send className="h-4 w-4 text-emerald-600" /> Request a payout</h3>
                     {pending ? (
-                        <p className="text-sm text-amber-700 dark:text-amber-300">{formatMoney(pending.amount, "NGN")} requested on {formatDate(pending.createdAt)}: waiting for Media Masters to transfer it.</p>
+                        <p className="text-sm text-amber-700 dark:text-amber-300">{formatMoney(pending.amount, "NGN")} requested on {formatDate(pending.createdAt)}: {pending.status === "PROCESSING" ? "on its way to your bank." : "waiting for Media Masters to transfer it."}</p>
                     ) : (
                         <>
                             <p className="mb-2 text-xs text-slate-500">Up to {formatMoney(entry.earned, "NGN")}. Media Masters transfers it to your bank and sends you the reference.</p>
@@ -157,7 +207,7 @@ function StationMoney({ entry, settings, onChanged }) {
                             {entry.payouts.map((p) => (
                                 <li key={p._id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
                                     <div className="min-w-0"><p className="text-slate-800 dark:text-slate-100">{formatMoney(p.amount, "NGN")}</p><p className="truncate text-xs text-slate-500">{formatDate(p.createdAt)}{p.reference ? ` · ref ${p.reference}` : ""}{p.note ? ` · ${p.note}` : ""}</p></div>
-                                    <span className={`text-xs font-semibold ${PAYOUT_TONE[p.status]}`}>{p.status === "PENDING" ? "Waiting" : p.status === "PAID" ? "Paid" : "Declined"}</span>
+                                    <span className={`text-xs font-semibold ${PAYOUT_TONE[p.status]}`}>{p.status === "PENDING" ? "Waiting" : p.status === "PROCESSING" ? "On its way" : p.status === "PAID" ? "Paid" : "Declined"}</span>
                                 </li>
                             ))}
                         </ul>

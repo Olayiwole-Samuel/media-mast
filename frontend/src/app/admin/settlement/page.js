@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Scale, Loader2, FileText, Film, Send, Settings2 } from "lucide-react";
 import {
     getAdminDisputes, resolveAdminDispute, getAdminPayouts, markAdminPayoutPaid, declineAdminPayout,
+    getPaystackStatus, sendAdminPayout, approveAdminPayout, refreshAdminPayout,
     getSettlementSettings, updateSettlementSettings, fetchFileUrl, bookingProofPath,
 } from "@/lib/api";
 import { DISPUTE_REASONS, formatDate, formatMoney } from "@/lib/status";
@@ -125,8 +126,12 @@ function Disputes() {
     );
 }
 
-function PayoutRow({ p, onDone }) {
+const PAYOUT_LABEL = { PROCESSING: "Sending", PAID: "Paid", DECLINED: "Declined" };
+const PAYOUT_TONE = { PROCESSING: "text-sky-400", PAID: "text-emerald-400", DECLINED: "text-red-400" };
+
+function PayoutRow({ p, onDone, paystackOn }) {
     const [mode, setMode] = useState(null);
+    const [note, setNote] = useState("");
     const [text, setText] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
@@ -141,24 +146,70 @@ function PayoutRow({ p, onDone }) {
             setBusy(false);
         }
     };
+    // Paystack: send, check again, or enter its approval code.
+    const viaPaystack = async (request) => {
+        setBusy(true); setError(""); setNote("");
+        try {
+            const res = await request();
+            setNote(res?.message || "");
+            setMode(null); setText("");
+            announceDataChanged();
+            onDone({ quiet: true });
+        } catch (err) {
+            setError(err?.message || "Couldn't reach Paystack.");
+            onDone({ quiet: true });
+        } finally { setBusy(false); }
+    };
+    const waitingCode = p.status === "PROCESSING" && p.transferStatus === "otp";
+
     return (
         <li className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-4">
             <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
                 <div>
-                    <p className="font-semibold text-white">{p.stationName || "Media house"} · {formatMoney(p.amount, p.currency)}</p>
+                    <p className="font-semibold text-white">{p.stationName || "Media house"} · {formatMoney(p.amount, p.currency)}{p.mode === "TEST" ? <span className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-xs font-medium text-amber-200">Paystack test</span> : null}</p>
                     <p className="text-sm text-slate-400">{p.account?.bankName} · {p.account?.accountNumber} · {p.account?.accountName}</p>
                     <p className="text-xs text-slate-500">Requested {formatDate(p.createdAt)}{p.reference ? ` · ref ${p.reference}` : ""}{p.note ? ` · ${p.note}` : ""}</p>
                 </div>
                 {p.status === "PENDING" ? (
-                    <div className="flex gap-2">
-                        <button type="button" onClick={() => { setMode("paid"); setText(""); }} className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600">Mark paid</button>
+                    <div className="flex flex-wrap gap-2">
+                        {paystackOn && p.account?.bankCode && (
+                            <button type="button" disabled={busy} onClick={() => { setMode("send"); setError(""); setNote(""); }} className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 disabled:opacity-50">Send with Paystack</button>
+                        )}
+                        <button type="button" onClick={() => { setMode("paid"); setText(""); }} className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white ${paystackOn && p.account?.bankCode ? "bg-white/10 hover:bg-white/20" : "bg-emerald-500 hover:bg-emerald-600"}`}>Mark paid</button>
                         <button type="button" onClick={() => { setMode("decline"); setText(""); }} className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-medium text-red-300 hover:bg-white/20">Decline</button>
                     </div>
                 ) : (
-                    <span className={`text-xs font-semibold ${p.status === "PAID" ? "text-emerald-400" : "text-red-400"}`}>{p.status === "PAID" ? "Paid" : "Declined"}</span>
+                    <div className="flex items-center gap-3">
+                        {p.status === "PROCESSING" && (
+                            <button type="button" disabled={busy} onClick={() => viaPaystack(() => refreshAdminPayout(p._id))} className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/20 disabled:opacity-50">Check now</button>
+                        )}
+                        <span className={`text-xs font-semibold ${PAYOUT_TONE[p.status] || "text-slate-300"}`}>{PAYOUT_LABEL[p.status] || p.status}</span>
+                    </div>
                 )}
             </div>
-            {mode && p.status === "PENDING" && (
+            {p.status === "PENDING" && p.failure && <p className="text-sm text-amber-300">Last try didn&apos;t go through: {p.failure}</p>}
+            {p.status === "PENDING" && paystackOn && !p.account?.bankCode && <p className="text-xs text-slate-500">Requested before Paystack was connected: pay it by hand and mark it paid.</p>}
+            {mode === "send" && p.status === "PENDING" && (
+                <div className="flex flex-col gap-2 rounded-lg bg-white/5 p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm text-slate-200">Send {formatMoney(p.amount, p.currency)} to {p.account?.accountName} ({p.account?.bankName}, {p.account?.accountNumber})?</p>
+                    <div className="flex gap-2">
+                        <button type="button" disabled={busy} onClick={() => setMode(null)} className="rounded-lg bg-white/10 px-3 py-2 text-sm text-slate-200 hover:bg-white/20">Cancel</button>
+                        <button type="button" disabled={busy} onClick={() => viaPaystack(() => sendAdminPayout(p._id))} className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-50">
+                            {busy && <Loader2 className="h-4 w-4 animate-spin" />} Yes, send
+                        </button>
+                    </div>
+                </div>
+            )}
+            {waitingCode && (
+                <div className="flex flex-col gap-2 sm:flex-row">
+                    <input value={text} onChange={(e) => setText(e.target.value.replace(/\D/g, "").slice(0, 10))} inputMode="numeric" placeholder="Approval code Paystack sent the business owner" className={inputClass} />
+                    <button type="button" disabled={busy || text.length < 4} onClick={() => viaPaystack(() => approveAdminPayout(p._id, text))} className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+                        {busy && <Loader2 className="h-4 w-4 animate-spin" />} Approve
+                    </button>
+                </div>
+            )}
+            {note && <p role="status" className="text-sm text-emerald-300">{note}</p>}
+            {(mode === "paid" || mode === "decline") && p.status === "PENDING" && (
                 <div className="flex flex-col gap-2 sm:flex-row">
                     <input value={text} onChange={(e) => setText(e.target.value)} placeholder={mode === "paid" ? "Bank transfer reference" : "Why it's declined (they see this)"} className={inputClass} />
                     <button type="button" disabled={busy || !text.trim()} onClick={act} className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
@@ -171,11 +222,29 @@ function PayoutRow({ p, onDone }) {
     );
 }
 
+function PaystackLine({ status }) {
+    if (!status) return null;
+    if (status.mode === "OFF") return <p className="text-sm text-slate-400">Paystack is not connected: send the money from the company bank account, then mark it paid with the transfer reference.</p>;
+    if (status.mode === "INVALID") return <p className="text-sm text-red-400">The Paystack key on the server is missing or not a secret key (sk_test_… or sk_live_…). Payments and payouts are paused until it is fixed.</p>;
+    return (
+        <div className="space-y-1 text-sm">
+            <p className="text-slate-300">
+                Paystack {status.mode === "TEST" ? "test mode (no real money moves)" : "live"}
+                {status.balance !== null ? <> · balance <span className="font-semibold text-white">{formatMoney(status.balance, "NGN")}</span></> : null}
+            </p>
+            {status.error && <p className="text-red-400">{status.error}</p>}
+            {status.mode === "LIVE" && status.testMoney && <p className="text-red-400">This database has test top-ups in it, so real payments and payouts are blocked. Use a separate live database.</p>}
+        </div>
+    );
+}
+
 function Payouts() {
     const [status, setStatus] = useState("PENDING");
     const [state, setState] = useState({ loading: true, error: null, data: [] });
-    const load = useCallback(async () => {
-        setState((s) => ({ ...s, loading: true }));
+    const [paystack, setPaystack] = useState(null);
+    const load = useCallback(async ({ quiet = false } = {}) => {
+        if (!quiet) setState((s) => ({ ...s, loading: true }));
+        getPaystackStatus().then((r) => setPaystack(r.data)).catch(() => {});
         try {
             const res = await getAdminPayouts(status || undefined);
             setState({ loading: false, error: null, data: res.data || [] });
@@ -190,16 +259,16 @@ function Payouts() {
 
     return (
         <div className="space-y-4">
-            <p className="text-sm text-slate-400">Until Paystack transfers are connected: send the money from the company bank account, then mark it paid with the transfer reference.</p>
-            <div className="flex gap-2">
-                {[["PENDING", "Waiting"], ["PAID", "Paid"], ["DECLINED", "Declined"], ["", "All"]].map(([v, l]) => (
+            <PaystackLine status={paystack} />
+            <div className="flex flex-wrap gap-2">
+                {[["PENDING", "Waiting"], ["PROCESSING", "Sending"], ["PAID", "Paid"], ["DECLINED", "Declined"], ["", "All"]].map(([v, l]) => (
                     <button key={l} type="button" onClick={() => setStatus(v)} className={`rounded-full px-3 py-1 text-xs font-medium ${status === v ? "bg-emerald-500 text-white" : "bg-white/10 text-slate-300"}`}>{l}</button>
                 ))}
             </div>
             {state.loading ? <PageLoading label="Loading payouts…" /> : state.error ? <ApiErrorState error={state.error} onRetry={load} /> : state.data.length === 0 ? (
                 <EmptyState icon={Send} title="No payouts here" message="Media houses request payouts of their earned money from their desk." />
             ) : (
-                <ul className="space-y-3">{state.data.map((p) => <PayoutRow key={p._id} p={p} onDone={load} />)}</ul>
+                <ul className="space-y-3">{state.data.map((p) => <PayoutRow key={p._id} p={p} onDone={load} paystackOn={["TEST", "LIVE"].includes(paystack?.mode)} />)}</ul>
             )}
         </div>
     );

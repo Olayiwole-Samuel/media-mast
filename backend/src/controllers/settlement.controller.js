@@ -9,6 +9,8 @@ const AuditLog = require('../models/AuditLog');
 const escrow = require('../utils/escrow');
 const { getOrCreateWallet, debitStation, reverseStationPayout, round2 } = require('../utils/wallet');
 const { ownsStation, stationOwnerFilter } = require('../utils/stationOperator');
+const { publicPayout } = require('../utils/payoutView');
+const paystack = require('../utils/paystack');
 const {
     notifyDisputeResolved, notifyStationEarning, notifyPayoutRequested, notifyPayoutDecided,
 } = require('../utils/notifications');
@@ -100,14 +102,9 @@ const updateSettings = async (req, res) => {
 };
 
 // ── Admin: payouts ──
-const publicPayout = (p, stationName) => ({
-    _id: p._id, stationId: p.stationId, stationName: stationName || null, amount: round2(p.amount), currency: p.currency || 'NGN',
-    status: p.status, account: p.account, reference: p.reference, note: p.note, createdAt: p.createdAt, decidedAt: p.decidedAt,
-});
-
 const getPayouts = async (req, res) => {
     try {
-        const status = ['PENDING', 'PAID', 'DECLINED'].includes(req.query.status) ? req.query.status : null;
+        const status = ['PENDING', 'PROCESSING', 'PAID', 'DECLINED'].includes(req.query.status) ? req.query.status : null;
         const rows = (await PayoutRequest.find(status ? { status } : {})).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 300);
         const stations = await Station.find({ _id: { $in: [...new Set(rows.map((r) => String(r.stationId)))] } }).select('name');
         const names = new Map(stations.map((s) => [String(s._id), s.name]));
@@ -189,7 +186,7 @@ const getEarnings = async (req, res) => {
                 payouts: payouts.slice(0, 50).map((p) => publicPayout(p, station.name)),
             });
         }
-        return res.json({ success: true, data: out, settings: { commissionPercent, disputeHours } });
+        return res.json({ success: true, data: out, settings: { commissionPercent, disputeHours, paystack: paystack.paystackEnabled() } });
     } catch (error) {
         console.error('❌ Earnings error:', error.name, error.message);
         return res.status(500).json({ success: false, message: 'Failed to load earnings' });
@@ -203,11 +200,73 @@ const loadOwnStation = async (req, res) => {
     return station;
 };
 
+// GET /station-portal/banks: the banks Paystack can pay into.
+const getBanks = async (req, res) => {
+    if (!paystack.paystackEnabled()) return res.json({ success: true, data: [] });
+    try {
+        return res.json({ success: true, data: await paystack.listBanks() });
+    } catch (error) {
+        console.error('❌ Bank list error:', error.name, error.message);
+        return res.status(502).json({ success: false, message: 'Failed to load the list of banks. Try again in a moment.' });
+    }
+};
+
+// Ask the bank whose account this is. Returns { account } to save, or { error, code }.
+const checkBankAccount = async ({ bankCode, accountNumber, accountName }) => {
+    let bank;
+    try {
+        bank = (await paystack.listBanks()).find((b) => b.code === bankCode);
+    } catch {
+        return { code: 502, error: 'The bank could not be reached. Try again in a moment.' };
+    }
+    if (!bank) return { code: 400, error: 'Choose the bank from the list' };
+    if (!/^\d{10}$/.test(accountNumber)) return { code: 400, error: 'Enter the 10-digit account number' };
+    try {
+        const found = await paystack.resolveAccount({ accountNumber, bankCode });
+        const name = String(found?.account_name || '').trim().slice(0, 120);
+        if (name) return { account: { bankName: bank.name, bankCode, accountNumber, accountName: name, verified: true } };
+    } catch (error) {
+        if (paystack.paystackMode() === 'LIVE') {
+            return error.answered
+                ? { code: 400, error: 'That account number was not found at this bank. Check both and try again.' }
+                : { code: 502, error: 'The bank could not be reached. Try again in a moment.' };
+        }
+        // Paystack's test mode only checks a few accounts a day: take the typed name.
+    }
+    if (paystack.paystackMode() === 'TEST' && accountName) return { account: { bankName: bank.name, bankCode, accountNumber, accountName, verified: false } };
+    return { code: 400, error: 'That account could not be confirmed. Check the bank and number, or enter the account name.', needsName: true };
+};
+
+// POST /station-portal/stations/:id/resolve-account { bankCode, accountNumber }
+// Shows the account name before it is saved.
+const resolvePayoutAccount = async (req, res) => {
+    try {
+        const station = await loadOwnStation(req, res);
+        if (!station) return undefined;
+        if (!paystack.paystackEnabled()) return res.status(503).json({ success: false, message: 'Account check is not available' });
+        const result = await checkBankAccount({ bankCode: String(req.body?.bankCode || ''), accountNumber: String(req.body?.accountNumber || '').replace(/\s/g, '') });
+        if (result.error) return res.status(result.code).json({ success: false, message: result.error, ...(result.needsName ? { code: 'NEEDS_NAME' } : {}) });
+        return res.json({ success: true, data: { accountName: result.account.accountName } });
+    } catch (error) {
+        console.error('❌ Account check error:', error.name, error.message);
+        return res.status(500).json({ success: false, message: 'Failed to check the account' });
+    }
+};
+
 const setPayoutAccount = async (req, res) => {
     try {
         const station = await loadOwnStation(req, res);
         if (!station) return undefined;
         const clean = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
+        if (paystack.paystackEnabled()) {
+            const result = await checkBankAccount({
+                bankCode: clean(req.body?.bankCode, 20), accountNumber: clean(req.body?.accountNumber, 20).replace(/\s/g, ''), accountName: clean(req.body?.accountName, 120),
+            });
+            if (result.error) return res.status(result.code).json({ success: false, message: result.error, ...(result.needsName ? { code: 'NEEDS_NAME' } : {}) });
+            await Station.updateOne({ _id: station._id }, { $set: { payoutAccount: result.account } });
+            await audit(req, { event: 'PAYOUT_ACCOUNT', station: station.name, bank: result.account.bankName, verified: result.account.verified }, station._id);
+            return res.json({ success: true, message: 'Bank account saved', data: result.account });
+        }
         const account = { bankName: clean(req.body?.bankName, 80), accountNumber: clean(req.body?.accountNumber, 20).replace(/\s/g, ''), accountName: clean(req.body?.accountName, 120) };
         if (!account.bankName || !account.accountName || !/^\d{10}$/.test(account.accountNumber)) {
             return res.status(400).json({ success: false, message: 'Enter the bank, a 10-digit account number and the account name' });
@@ -231,13 +290,13 @@ const requestPayout = async (req, res) => {
         if (!account || !account.accountNumber) return res.status(400).json({ success: false, message: 'Add your bank account first' });
         const amount = round2(Number(String(req.body?.amount ?? '').replace(/[,\s₦]/g, '')));
         if (!(amount >= MIN_PAYOUT)) return res.status(400).json({ success: false, message: `Request at least ₦${MIN_PAYOUT.toLocaleString()}` });
-        const pending = await PayoutRequest.findOne({ stationId: station._id, status: 'PENDING' });
+        const pending = await PayoutRequest.findOne({ stationId: station._id, status: { $in: ['PENDING', 'PROCESSING'] } });
         if (pending) return res.status(409).json({ success: false, message: 'You already have a payout request waiting' });
 
         const taken = await debitStation(station._id, amount, { note: 'Payout requested' });
         if (!taken.ok) return res.status(400).json({ success: false, message: `You have ₦${taken.balance.toLocaleString()} available to pay out` });
         const request = await PayoutRequest.create({
-            stationId: station._id, amount, account: { bankName: account.bankName, accountNumber: account.accountNumber, accountName: account.accountName }, requestedBy: req.user._id,
+            stationId: station._id, amount, account: { bankName: account.bankName, bankCode: account.bankCode || null, accountNumber: account.accountNumber, accountName: account.accountName }, requestedBy: req.user._id,
         });
         await notifyPayoutRequested(request, station);
         return res.status(201).json({ success: true, message: 'Payout requested. Media Masters will transfer it to your bank.', data: publicPayout(request, station.name) });
@@ -256,6 +315,8 @@ module.exports = {
     markPayoutPaid: decidePayout(true),
     declinePayout: decidePayout(false),
     getEarnings,
+    getBanks,
+    resolvePayoutAccount,
     setPayoutAccount,
     requestPayout,
 };

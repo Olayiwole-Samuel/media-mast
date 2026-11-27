@@ -360,6 +360,14 @@ router.post('/bookings/:id/resolve-dispute', settlementAdmin.resolveDispute);
 router.get('/payouts', settlementAdmin.getPayouts);
 router.post('/payouts/:id/paid', settlementAdmin.markPayoutPaid);
 router.post('/payouts/:id/decline', settlementAdmin.declinePayout);
+// Paystack: connection, top-ups, sending payouts.
+const paystackAdmin = require('../../controllers/paystack.controller');
+router.get('/paystack', paystackAdmin.getPaystackStatus);
+router.get('/paystack/top-ups', paystackAdmin.getTopUps);
+router.post('/paystack/top-ups/:reference/check', paystackAdmin.checkTopUp);
+router.post('/payouts/:id/send', paystackAdmin.sendPayoutNow);
+router.post('/payouts/:id/otp', paystackAdmin.approvePayoutNow);
+router.post('/payouts/:id/refresh', paystackAdmin.refreshPayoutNow);
 router.get('/settlement-settings', settlementAdmin.getSettings);
 router.patch('/settlement-settings', settlementAdmin.updateSettings);
 

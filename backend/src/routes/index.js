@@ -62,6 +62,8 @@ router.use('/insights', insightsRoutes);
 router.use('/uploads', uploadRoutes);
 router.use('/verification', verificationRoutes);
 router.use('/wallet', require('./v1/wallet.routes'));
+// Paystack calls this (no user session; the signature is the proof).
+router.post('/webhooks/paystack', require('../controllers/paystack.controller').paystackWebhook);
 router.use('/media-plans', require('./v1/plan.routes'));
 router.use('/volume-agreements', require('./v1/volumeAgreement.routes'));
 router.use('/public', require('./v1/public.routes'));

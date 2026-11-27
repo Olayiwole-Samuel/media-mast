@@ -98,4 +98,11 @@ const runBriefings = async (now = new Date()) => {
     return { sent };
 };
 
-module.exports = { runReminders, runSettlementJob, runBriefings, REMINDER_STATUSES };
+// Paystack: re-check top-ups and payouts nobody has reported back on.
+const runPaystackChecks = async (now = new Date()) => {
+    const { sweepFunding } = require('./funding');
+    const { sweepPayouts } = require('./payouts');
+    return { topUps: await sweepFunding(now), payouts: await sweepPayouts(now) };
+};
+
+module.exports = { runReminders, runSettlementJob, runBriefings, runPaystackChecks, REMINDER_STATUSES };

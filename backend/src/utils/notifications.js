@@ -489,6 +489,20 @@ const notifyPayoutDecided = safely('payout decided', async (request, station) =>
     return true;
 });
 
+// Admins: a Paystack transfer failed, came back, or looks wrong.
+const notifyPayoutProblem = safely('payout problem', async (request, reason) => {
+    const admins = await adminUsers();
+    await pushInApp(admins, { type: 'PAYMENT_RECEIVED', title: `Payout not sent: ${money(request.amount, request.currency)}`, body: reason, link: '/admin/settlement?tab=payouts', ref: `payout:${request._id}` });
+    return true;
+});
+
+// Admins: a Paystack top-up that needs a person to look at it.
+const notifyFundingProblem = safely('funding problem', async (intent, reason) => {
+    const admins = await adminUsers();
+    await pushInApp(admins, { type: 'PAYMENT_RECEIVED', title: `Check a Paystack top-up: ${money(intent.amount, intent.currency)}`, body: `${intent.reference}: ${reason}`, link: '/admin/wallets' });
+    return true;
+});
+
 // ── Media plans ──
 const fmtDay = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -720,6 +734,8 @@ module.exports = {
     notifyAirOverdue,
     notifyPayoutRequested,
     notifyPayoutDecided,
+    notifyPayoutProblem,
+    notifyFundingProblem,
     notifyPlanBooked,
     notifyPlanStatus,
     notifyAgreementRequested,

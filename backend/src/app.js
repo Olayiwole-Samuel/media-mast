@@ -62,7 +62,12 @@ app.use((req, res, next) => cors({
     credentials: true,
 })(req, res, next));
 
-app.use(express.json());
+// Webhook signatures are checked on the exact bytes received, so keep them.
+app.use(express.json({
+    verify: (req, res, buf) => {
+        if (req.originalUrl.startsWith('/api/v1/webhooks/')) req.rawBody = Buffer.from(buf);
+    },
+}));
 app.use(express.urlencoded({ extended: true }));
 
 // ── Database readiness ──

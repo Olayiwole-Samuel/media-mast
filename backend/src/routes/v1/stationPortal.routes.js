@@ -38,6 +38,8 @@ router.patch('/bulk', requireStationOperator('BOOKING_APPROVE'), require('../../
 const agreements = require('../../controllers/volumeAgreement.controller');
 router.get('/volume-agreements', requireStationOperator('BOOKING_VIEW'), agreements.getStationAgreements);
 router.patch('/volume-agreements/:agreementId', requireStationOperator('BOOKING_APPROVE'), (req, res) => { req.params.id = req.params.agreementId; return agreements.decideAgreement(req, res); });
+router.get('/banks', requireStationOperator('BOOKING_APPROVE'), settlement.getBanks);
+router.post('/stations/:id/resolve-account', requireStationOperator('BOOKING_APPROVE'), settlement.resolvePayoutAccount);
 router.put('/stations/:id/payout-account', requireStationOperator('BOOKING_APPROVE'), settlement.setPayoutAccount);
 router.post('/stations/:id/payouts', requireStationOperator('BOOKING_APPROVE'), settlement.requestPayout);
 router.get('/stations', requireStationOperator('BOOKING_VIEW'), getMyStations);

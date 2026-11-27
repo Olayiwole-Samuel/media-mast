@@ -22,7 +22,7 @@ for (const file of files) {
         // Suites written before wallets and the team switch-off still cover the
         // card-provider checkout and team accounts (both kept behind settings);
         // wallet.test.cjs sets WALLET_PAYMENTS / TEAM_ACCOUNTS_ENABLED itself.
-        env: { ...process.env, MM_RUN_TXN_INTEGRATION: '', WALLET_PAYMENTS: 'false', TEAM_ACCOUNTS_ENABLED: 'true', MULTI_STATION_DISCOUNTS_ENABLED: 'true', ACCOUNT_APPROVAL_REQUIRED: 'true' }, // never forwarded to offline suites
+        env: { ...process.env, MM_RUN_TXN_INTEGRATION: '', WALLET_PAYMENTS: 'false', TEAM_ACCOUNTS_ENABLED: 'true', MULTI_STATION_DISCOUNTS_ENABLED: 'true', ACCOUNT_APPROVAL_REQUIRED: 'true', PAYSTACK_SECRET_KEY: '', PAYSTACK_WEBHOOK_SECRET: '', PAYSTACK_REQUIRED: '' }, // never forwarded to offline suites
     });
     const output = `${run.stdout || ''}\n${run.stderr || ''}`;
     // Each suite ends with a line like "N/M passed" (some prefix it, e.g. "N9: 75/75 passed").

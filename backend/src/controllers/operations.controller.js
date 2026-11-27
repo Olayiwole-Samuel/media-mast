@@ -458,7 +458,7 @@ const getInvoice = async (req, res) => {
         const wallet = await getOrCreateWallet(advertiserOwner(req));
         const t = await WalletTransaction.findOne({ _id: id, walletId: wallet._id, type: kind === 'receipt' ? 'FUND' : 'REFUND' });
         if (!t) return res.status(404).json({ success: false, message: 'Not found' });
-        return res.json({ success: true, data: { ...base, kind, title: kind === 'receipt' ? 'Receipt' : 'Credit note', number: `${kind === 'receipt' ? 'RCT' : 'CRN'}-${t.reference || String(t._id).slice(-8)}`, date: t.createdAt, items: [{ description: kind === 'receipt' ? `Wallet top-up${t.method === 'TEST' ? ' (test mode)' : ''}` : (t.note || 'Refund to wallet'), qty: 1, net: round2(t.amount), vat: 0 }], totals: { total: round2(t.amount) } } });
+        return res.json({ success: true, data: { ...base, kind, title: kind === 'receipt' ? 'Receipt' : 'Credit note', number: `${kind === 'receipt' ? 'RCT' : 'CRN'}-${t.reference || String(t._id).slice(-8)}`, date: t.createdAt, items: [{ description: kind === 'receipt' ? `Wallet top-up${['TEST', 'PAYSTACK_TEST'].includes(t.method) ? ' (test mode)' : ''}` : (t.note || 'Refund to wallet'), qty: 1, net: round2(t.amount), vat: 0 }], totals: { total: round2(t.amount) } } });
     } catch (error) {
         console.error('❌ Invoice error:', error.name, error.message);
         return res.status(500).json({ success: false, message: 'Failed to load the document' });

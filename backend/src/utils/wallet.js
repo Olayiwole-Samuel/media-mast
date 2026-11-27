@@ -12,9 +12,9 @@ const WalletTransaction = require('../models/WalletTransaction');
 // airs (utils/escrow.js releases it to the media house); if it doesn't air,
 // is declined or a dispute is upheld, it goes back to the available balance.
 //
-// Funding is TEST MODE for now: the amount is added straight away and no real
-// money moves. A real gateway (Paystack: initialize → redirect → verified
-// webhook → credit) replaces fundingProvider without touching checkout.
+// Funding goes through Paystack when PAYSTACK_SECRET_KEY is set
+// (utils/funding.js: checkout → confirmed with Paystack → credit). Without a
+// key it is instant TEST MODE: the amount is added and no real money moves.
 // ─────────────────────────────────────────────────────────────
 
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
@@ -47,15 +47,27 @@ const getOrCreateWallet = async (payer) => {
     }
 };
 
-const record = (wallet, fields) => WalletTransaction.create({
-    walletId: wallet._id,
-    currency: wallet.currency || 'NGN',
-    balanceAfter: round2(wallet.balance),
-    ...fields,
-});
+const record = async (wallet, fields, session) => {
+    const entry = {
+        walletId: wallet._id,
+        currency: wallet.currency || 'NGN',
+        balanceAfter: round2(wallet.balance),
+        ...fields,
+    };
+    if (!session) return WalletTransaction.create(entry);
+    return (await WalletTransaction.create([entry], { session }))[0];
+};
 
-// Add money (FUND, REFUND or a positive ADJUSTMENT).
-const credit = async (payer, amount, { type, ...meta }) => {
+// Back above the alert line: the next drop alerts again.
+const clearLowBalanceAlert = async (wallet) => {
+    if (!wallet.lowBalanceAlertedAt || wallet.balance < (wallet.lowBalanceThreshold || 0)) return;
+    await Wallet.updateOne({ _id: wallet._id }, { $set: { lowBalanceAlertedAt: null } });
+    wallet.lowBalanceAlertedAt = null;
+};
+
+// Add money (FUND, REFUND or a positive ADJUSTMENT). Inside a database
+// transaction pass { session }: the caller clears the alert after it commits.
+const credit = async (payer, amount, { type, ...meta }, { session } = {}) => {
     const value = round2(amount);
     if (!(value > 0)) throw new Error('Credit amount must be positive');
     const wallet = await getOrCreateWallet(payer);
@@ -63,14 +75,10 @@ const credit = async (payer, amount, { type, ...meta }) => {
     const updated = await Wallet.findOneAndUpdate(
         { _id: wallet._id },
         { $inc: { balance: value, ...totals } },
-        { returnDocument: 'after' }
+        { returnDocument: 'after', ...(session ? { session } : {}) }
     );
-    // Back above the alert line: the next drop alerts again.
-    if (updated.lowBalanceAlertedAt && updated.balance >= (updated.lowBalanceThreshold || 0)) {
-        await Wallet.updateOne({ _id: updated._id }, { $set: { lowBalanceAlertedAt: null } });
-        updated.lowBalanceAlertedAt = null;
-    }
-    const transaction = await record(updated, { type, amount: value, ...meta });
+    if (!session) await clearLowBalanceAlert(updated);
+    const transaction = await record(updated, { type, amount: value, ...meta }, session);
     return { wallet: updated, transaction };
 };
 
@@ -227,12 +235,10 @@ const walletProvider = {
     },
 };
 
-// ── Funding (test mode until Paystack is connected) ──
+// ── Funding without Paystack (no key set): instant, pretend money ──
 const fundingProvider = {
     name: 'TEST',
     isTestMode: true,
-    // Paystack later: return { status: 'PENDING', authorizationUrl } and
-    // credit from the verified webhook instead.
     async collect() {
         return { status: 'SUCCESSFUL' };
     },
@@ -268,6 +274,7 @@ module.exports = {
     debitStation,
     reverseStationPayout,
     fundWallet,
+    clearLowBalanceAlert,
     round2,
     MIN_FUND,
     MAX_FUND,

@@ -331,6 +331,8 @@ const StationSchema = new mongoose.Schema(
         // Where its earnings are paid (payout requests snapshot this).
         payoutAccount: {
             bankName: { type: String, default: null },
+            bankCode: { type: String, default: null }, // Paystack's code for the bank
+            verified: { type: Boolean, default: false }, // the bank confirmed the account name
             accountNumber: { type: String, default: null },
             accountName: { type: String, default: null },
         },

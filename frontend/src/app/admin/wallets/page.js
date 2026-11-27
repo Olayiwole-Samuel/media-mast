@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Wallet as WalletIcon, X, Loader2, Search } from "lucide-react";
-import { getAdminWallets, getAdminWalletTransactions, adjustAdminWallet } from "@/lib/api";
+import { getAdminWallets, getAdminWalletTransactions, adjustAdminWallet, getPaystackTopUps, checkPaystackTopUp } from "@/lib/api";
 import { formatMoney } from "@/lib/status";
 import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/PageState";
 
@@ -11,6 +11,62 @@ import { PageLoading, ApiErrorState, EmptyState } from "@/components/common/Page
 
 const TYPE_LABEL = { FUND: "Top-up", CHARGE: "Booking", REFUND: "Refund", ADJUSTMENT: "Adjustment" };
 const inputClass = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white";
+
+const TOPUP = {
+    PENDING: ["Not paid yet", "text-amber-300"], PAID: ["Paid", "text-emerald-400"], FAILED: ["Failed", "text-slate-400"], MISMATCH: ["Needs checking", "text-red-400"],
+};
+
+// Paystack top-ups, newest first: for "I paid but it isn't in my wallet".
+function TopUps({ onChanged }) {
+    const [rows, setRows] = useState(null);
+    const [busy, setBusy] = useState("");
+    const [message, setMessage] = useState("");
+    const load = useCallback(() => getPaystackTopUps().then((r) => setRows(r.data || [])).catch(() => setRows([])), []);
+    useEffect(() => { load(); }, [load]);
+    if (!rows || rows.length === 0) return null;
+
+    const check = async (reference) => {
+        setBusy(reference); setMessage("");
+        try {
+            const res = await checkPaystackTopUp(reference);
+            setMessage(`${reference}: ${res.message}`);
+            await load();
+            onChanged();
+        } catch (err) {
+            setMessage(err?.message || "Couldn't reach Paystack.");
+        } finally { setBusy(""); }
+    };
+
+    return (
+        <section className="space-y-3">
+            <h2 className="text-lg font-semibold text-white">Paystack top-ups</h2>
+            {message && <p role="status" className="text-sm text-slate-300">{message}</p>}
+            <div className="overflow-x-auto rounded-xl border border-white/10">
+                <table className="w-full min-w-[720px] text-left text-sm">
+                    <thead className="bg-white/5 text-xs text-slate-400">
+                        <tr><th className="px-4 py-3 font-medium">When</th><th className="px-4 py-3 font-medium">Owner</th><th className="px-4 py-3 text-right font-medium">Amount</th><th className="px-4 py-3 font-medium">Status</th><th className="px-4 py-3 font-medium">Reference</th><th className="px-4 py-3" /></tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                        {rows.map((t) => (
+                            <tr key={t._id} className="text-slate-200">
+                                <td className="whitespace-nowrap px-4 py-3">{new Date(t.createdAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</td>
+                                <td className="px-4 py-3">{t.owner || "—"}</td>
+                                <td className="px-4 py-3 text-right font-semibold">{formatMoney(t.amount, t.currency)}</td>
+                                <td className="px-4 py-3"><span className={`font-medium ${TOPUP[t.status]?.[1] || ""}`}>{TOPUP[t.status]?.[0] || t.status}</span>{t.mode === "TEST" ? <span className="ml-2 text-xs text-amber-200">test</span> : null}{t.message && t.status !== "PAID" ? <p className="text-xs text-slate-500">{t.message}</p> : null}</td>
+                                <td className="px-4 py-3 font-mono text-xs text-slate-400">{t.reference}</td>
+                                <td className="px-4 py-3 text-right">
+                                    {["PENDING", "FAILED"].includes(t.status) && (
+                                        <button type="button" disabled={!!busy} onClick={() => check(t.reference)} className="text-xs font-medium text-emerald-400 hover:underline disabled:opacity-50">{busy === t.reference ? "Checking…" : "Check again"}</button>
+                                    )}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    );
+}
 
 export default function AdminWalletsPage() {
     const [state, setState] = useState({ loading: true, error: null, data: [], totals: null });
@@ -77,7 +133,7 @@ export default function AdminWalletsPage() {
         <div className="min-h-screen space-y-6 bg-slate-950 p-4 text-white sm:p-6 lg:p-8">
             <div>
                 <h1 className="flex items-center gap-2 text-2xl font-bold text-white"><WalletIcon className="h-6 w-6 text-emerald-400" /> Wallets</h1>
-                <p className="mt-1 text-slate-400">Advertisers fund their wallet and every booking is paid from it. Top-ups are in test mode until Paystack is connected; credit bank transfers here.</p>
+                <p className="mt-1 text-slate-400">Advertisers fund their wallet and every booking is paid from it. Top-ups come through Paystack; credit bank transfers made straight to the company account here.</p>
             </div>
 
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -120,6 +176,8 @@ export default function AdminWalletsPage() {
                     </table>
                 </div>
             )}
+
+            <TopUps onChanged={load} />
 
             {open && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setOpen(null)}>

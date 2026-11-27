@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 // One movement of money in or out of a wallet. Amounts are always positive;
 // the type says which way it went.
-//   FUND        money added by the advertiser (test mode now; Paystack later)
+//   FUND        money added by the advertiser
 //   HOLD        a checkout: the spots' money set aside until they air (not spent yet)
 //   CHARGE      a spot aired: its held money is paid to the media house (spent)
 //   REFUND      money returned (declined / cancelled / not aired / upheld dispute, or a failed checkout)
@@ -22,7 +22,8 @@ const WalletTransactionSchema = new mongoose.Schema(
         currency: { type: String, default: 'NGN' },
 
         reference: { type: String, default: null },
-        // How the money came in: TEST (test mode), PAYSTACK, ADMIN.
+        // How the money came in: TEST (instant test mode), PAYSTACK_TEST (Paystack's
+        // test mode), PAYSTACK (real money), ADMIN.
         method: { type: String, default: null },
 
         campaignId: { type: mongoose.Schema.Types.ObjectId, ref: 'Campaign', default: null },
